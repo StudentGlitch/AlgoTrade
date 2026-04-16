@@ -3,7 +3,7 @@
 # the same ML stack as the mlops service.
 numpy
 pandas
-backtrader
+backtrader @ git+https://github.com/mementum/backtrader.git@b853d7c90b6721476eb5a5ea3135224e33db1f14
 ib_insync
 requests
 python-dotenv
