@@ -109,6 +109,10 @@ class DatabaseConnector:
 class SectorSentimentProxyImputer:
     """Imputes zero-mention sentiment using sector/day aggregates with causal-safe fallbacks."""
 
+    TRUTHY_VALUES = {"1", "true", "t", "yes", "y", "micro", "microcap", "micro_cap"}
+    TIER_LOW_QUANTILE = 0.33
+    TIER_HIGH_QUANTILE = 0.66
+
     def __init__(
         self,
         sentiment_col: str = "finbert_score",
@@ -133,7 +137,7 @@ class SectorSentimentProxyImputer:
         if pd.api.types.is_bool_dtype(s):
             return s.fillna(False)
         vals = s.astype(str).str.strip().str.lower()
-        return vals.isin({"1", "true", "t", "yes", "y", "micro", "microcap", "micro_cap"})
+        return vals.isin(self.TRUTHY_VALUES)
 
     def apply(self, df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         if df.empty or self.date_col not in df.columns:
@@ -224,6 +228,10 @@ class SectorSentimentProxyImputer:
 
         if "liquidity_tier" in out.columns:
             return out
+        if "company" not in out.columns:
+            out["liquidity_tier"] = "unknown"
+            out["transfer_learning_anchor"] = 0
+            return out
 
         liquidity_source = None
         for c in ["turnover_proxy", "volume", "market_cap"]:
@@ -237,17 +245,17 @@ class SectorSentimentProxyImputer:
             return out
 
         grp = out.groupby("company", as_index=False)[liquidity_source].median().rename(columns={liquidity_source: "_liquidity_med"})
-        q1 = grp["_liquidity_med"].quantile(0.33)
-        q2 = grp["_liquidity_med"].quantile(0.66)
+        q1 = grp["_liquidity_med"].quantile(self.TIER_LOW_QUANTILE)
+        q2 = grp["_liquidity_med"].quantile(self.TIER_HIGH_QUANTILE)
 
         def to_tier(v: float) -> str:
             if pd.isna(v):
                 return "unknown"
-            if v <= q1:
+            if v < q1:
                 return "micro_or_small"
-            if v >= q2:
-                return "large_or_liquid"
-            return "mid"
+            if v < q2:
+                return "mid"
+            return "large_or_liquid"
 
         grp["liquidity_tier"] = grp["_liquidity_med"].apply(to_tier)
         grp["transfer_learning_anchor"] = (grp["liquidity_tier"] == "large_or_liquid").astype(int)
