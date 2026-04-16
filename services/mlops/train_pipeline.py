@@ -66,6 +66,19 @@ except Exception:  # transformers are optional at runtime
     AutoModelForSequenceClassification = None
     AutoTokenizer = None
 
+try:
+    from phase1_idx_localized_nlp import (
+        LocalizedIndonesianSentimentExtractor,
+        LocalizedSentimentConfig,
+        PomPomRegimeDetector,
+        PomPomRegimeConfig,
+    )
+except Exception:  # pragma: no cover - optional runtime dependency
+    LocalizedIndonesianSentimentExtractor = None
+    LocalizedSentimentConfig = None
+    PomPomRegimeDetector = None
+    PomPomRegimeConfig = None
+
 
 _SHARED = Path(__file__).resolve().parent.parent.parent / "shared"
 DEFAULT_MASTER_DATA = str(_SHARED / "data" / "phase6_lpa_enriched.csv")
@@ -109,6 +122,8 @@ class PipelineConfig:
     daily_time: str = "16:10"      # local time
     weekly_time: str = "02:00"     # Saturday
     finbert_model_name: str = "ProsusAI/finbert"
+    idx_sentiment_model_name: str = "indobenchmark/indobert-base-p1"
+    enable_idx_localized_sentiment: bool = True
     # Phase 2: Global Panel LSTM
     panel_lstm_epochs: int = 30
     panel_lstm_batch_size: int = 512
@@ -192,6 +207,15 @@ class DailyCollector:
     def __init__(self, cfg: PipelineConfig):
         self.cfg = cfg
         self._finbert = None
+        self._idx_sentiment = None
+        if (
+            self.cfg.enable_idx_localized_sentiment
+            and LocalizedIndonesianSentimentExtractor is not None
+            and LocalizedSentimentConfig is not None
+        ):
+            self._idx_sentiment = LocalizedIndonesianSentimentExtractor(
+                LocalizedSentimentConfig(model_name=self.cfg.idx_sentiment_model_name)
+            )
 
     def _fetch_macro(self, lookback_days: int = 45) -> pd.DataFrame:
         end = now_utc().date() + timedelta(days=1)
@@ -272,15 +296,34 @@ class DailyCollector:
 
         if not news_raw.empty:
             news_raw["finbert_score"] = self._score_finbert(news_raw["text"].tolist())
+            if self._idx_sentiment is not None:
+                news_raw = self._idx_sentiment.score_dataframe(news_raw, text_col="text")
+            else:
+                news_raw["sentiment_polarity"] = news_raw["finbert_score"]
+                news_raw["sentiment_intensity"] = news_raw["finbert_score"].abs().clip(0.0, 1.0)
+                news_raw["sentiment_uncertainty"] = 1.0 - news_raw["sentiment_intensity"]
             news_daily = (
                 news_raw.groupby(["company", "date"], as_index=False)
                 .agg(
                     news_items_day=("text", "count"),
                     finbert_score=("finbert_score", "mean"),
+                    sentiment_polarity=("sentiment_polarity", "mean"),
+                    sentiment_intensity=("sentiment_intensity", "mean"),
+                    sentiment_uncertainty=("sentiment_uncertainty", "mean"),
                 )
             )
         else:
-            news_daily = pd.DataFrame(columns=["company", "date", "news_items_day", "finbert_score"])
+            news_daily = pd.DataFrame(
+                columns=[
+                    "company",
+                    "date",
+                    "news_items_day",
+                    "finbert_score",
+                    "sentiment_polarity",
+                    "sentiment_intensity",
+                    "sentiment_uncertainty",
+                ]
+            )
 
         # Merge Mirofish first if present
         if not mirofish_df.empty and {"company", "date"}.issubset(mirofish_df.columns):
@@ -307,7 +350,13 @@ class DailyCollector:
         # News + FinBERT merge
         if not news_daily.empty:
             df = df.merge(news_daily, on=["company", "date"], how="left", suffixes=("", "_new"))
-            for c in ["news_items_day", "finbert_score"]:
+            for c in [
+                "news_items_day",
+                "finbert_score",
+                "sentiment_polarity",
+                "sentiment_intensity",
+                "sentiment_uncertainty",
+            ]:
                 nc = f"{c}_new"
                 if nc in df.columns:
                     df[c] = df[c].combine_first(df[nc]) if c in df.columns else df[nc]
@@ -318,12 +367,20 @@ class DailyCollector:
             df["finbert_score"] = pd.to_numeric(df["finbert_score"], errors="coerce").fillna(0.0)
         if "news_items_day" in df.columns:
             df["news_items_day"] = pd.to_numeric(df["news_items_day"], errors="coerce").fillna(0).astype(int)
+        for c, default in [
+            ("sentiment_polarity", 0.0),
+            ("sentiment_intensity", 0.0),
+            ("sentiment_uncertainty", 1.0),
+        ]:
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors="coerce").fillna(default)
 
         stats = {
             "macro_rows_collected": int(len(macro_df)),
             "news_text_rows_collected": int(len(news_raw)),
             "news_daily_rows": int(len(news_daily)),
             "mirofish_rows_collected": int(len(mirofish_df)),
+            "idx_localized_sentiment_enabled": bool(self._idx_sentiment is not None),
         }
         return df.sort_values(["company", "date"]), stats
 
@@ -335,8 +392,29 @@ class LPARefitter:
         self.gmm = GaussianMixture(n_components=n_components, covariance_type="full", random_state=42, n_init=5)
 
     def fit_transform(self, df: pd.DataFrame, train_cutoff: pd.Timestamp) -> tuple[pd.DataFrame, dict]:
-        features = [c for c in ["finbert_score", "news_items_day", "news_count", "volume_z20", "volatility_20d", "abs_return", "vix_close_ret", "usd_idr_close_ret"] if c in df.columns]
+        features = [
+            c
+            for c in [
+                "finbert_score",
+                "sentiment_polarity",
+                "sentiment_intensity",
+                "sentiment_uncertainty",
+                "news_items_day",
+                "news_count",
+                "volume_z20",
+                "volatility_20d",
+                "abs_return",
+                "vix_close_ret",
+                "usd_idr_close_ret",
+            ]
+            if c in df.columns
+        ]
         work = df.copy()
+        if "volume_spike_z20" not in work.columns:
+            if "volume_z20" in work.columns:
+                work["volume_spike_z20"] = pd.to_numeric(work["volume_z20"], errors="coerce").fillna(0.0)
+            else:
+                work["volume_spike_z20"] = 0.0
         for c in features:
             work[c] = pd.to_numeric(work[c], errors="coerce")
 
@@ -349,7 +427,20 @@ class LPARefitter:
         probs = self.gmm.predict_proba(self.scaler.transform(X_all))
         work["lpa_profile_id"] = self.gmm.predict(self.scaler.transform(X_all)) + 1
         work["lpa_profile_conf"] = probs.max(axis=1)
-        return work, {"lpa_features": features, "lpa_train_rows": int(len(train_idx))}
+        pom_stats = {}
+        if PomPomRegimeDetector is not None and PomPomRegimeConfig is not None:
+            pom_detector = PomPomRegimeDetector(PomPomRegimeConfig())
+            work, pom_stats = pom_detector.fit_transform(work, train_cutoff=train_cutoff)
+        else:
+            work["idx_regime_cluster_id"] = 1
+            work["idx_regime_cluster_conf"] = 0.0
+            work["is_pom_pom_regime"] = 0
+            work["idx_regime_label"] = "NORMAL"
+        return work, {
+            "lpa_features": features,
+            "lpa_train_rows": int(len(train_idx)),
+            "idx_regime_stats": pom_stats,
+        }
 
     def save(self, prod_dir: str) -> str:
         out = os.path.join(prod_dir, "lpa_gmm_model.pkl")
@@ -524,11 +615,45 @@ class ContinuousTrainingPipeline:
         lstm_path, scaler_path = lstm.save(self.cfg.prod_dir)
 
         # Persist refreshed profile ids in master data
-        keep_base = df.drop(columns=[c for c in ["lpa_profile_id", "lpa_profile_conf"] if c in df.columns], errors="ignore")
-        upd = train_df[["company", "date", "lpa_profile_id", "lpa_profile_conf"]]
+        keep_base = df.drop(
+            columns=[
+                c
+                for c in [
+                    "lpa_profile_id",
+                    "lpa_profile_conf",
+                    "idx_regime_cluster_id",
+                    "idx_regime_cluster_conf",
+                    "is_pom_pom_regime",
+                    "idx_regime_label",
+                ]
+                if c in df.columns
+            ],
+            errors="ignore",
+        )
+        upd_cols = [
+            "company",
+            "date",
+            "lpa_profile_id",
+            "lpa_profile_conf",
+            "idx_regime_cluster_id",
+            "idx_regime_cluster_conf",
+            "is_pom_pom_regime",
+            "idx_regime_label",
+        ]
+        upd = train_df[[c for c in upd_cols if c in train_df.columns]]
         merged = keep_base.merge(upd, on=["company", "date"], how="left")
         merged["lpa_profile_id"] = merged["lpa_profile_id"].fillna(1).astype(int)
         merged["lpa_profile_conf"] = merged["lpa_profile_conf"].fillna(0.0)
+        if "idx_regime_cluster_id" in merged.columns:
+            merged["idx_regime_cluster_id"] = merged["idx_regime_cluster_id"].fillna(1).astype(int)
+        if "idx_regime_cluster_conf" in merged.columns:
+            merged["idx_regime_cluster_conf"] = merged["idx_regime_cluster_conf"].fillna(0.0)
+        if "is_pom_pom_regime" in merged.columns:
+            merged["is_pom_pom_regime"] = pd.to_numeric(
+                merged["is_pom_pom_regime"], errors="coerce"
+            ).fillna(0).astype(int)
+        if "idx_regime_label" in merged.columns:
+            merged["idx_regime_label"] = merged["idx_regime_label"].fillna("NORMAL")
         self.repo.save(merged.sort_values(["company", "date"]))
 
         result = {

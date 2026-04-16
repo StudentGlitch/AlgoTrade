@@ -17,7 +17,7 @@ import math
 import os
 import time
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from collections import deque
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple
@@ -126,11 +126,12 @@ class CustomDataFeed(bt.feeds.PandasData):
     - lpa_profile_id
     """
 
-    lines = ("finbert_score", "pred_volatility", "lpa_profile_id")
+    lines = ("finbert_score", "pred_volatility", "lpa_profile_id", "is_pom_pom_regime")
     params = (
         ("finbert_score", -1),
         ("pred_volatility", -1),
         ("lpa_profile_id", -1),
+        ("is_pom_pom_regime", -1),
     )
 
 
@@ -153,8 +154,16 @@ class RegimeStateMachine:
     BREAKOUT_VOLATILE = {4, 6}
     TRENDING_NORMAL = {1, 3}
     MEAN_REVERSION = {7, 8}
+    POM_POM_STOP_MULT = 0.6
 
-    def resolve(self, profile_id: int) -> RegimeConfig:
+    def resolve(self, profile_id: int, pom_pom_active: bool = False) -> RegimeConfig:
+        if pom_pom_active:
+            return RegimeConfig(
+                action="POM_POM_RISK_OFF",
+                max_pos_size=0.0,
+                c_scale=0.0,
+                k_stop_mult=self.POM_POM_STOP_MULT,
+            )
         if profile_id in self.BREAKOUT_VOLATILE:
             return RegimeConfig(
                 action="AGGRESSIVE_DIRECTIONAL",
@@ -321,7 +330,7 @@ class LiveFeatureService:
         if key in self._cache:
             return self._cache[key]
 
-        out = {"finbert_score": 0.0, "pred_volatility": 0.02, "lpa_profile_id": 1}
+        out = {"finbert_score": 0.0, "pred_volatility": 0.02, "lpa_profile_id": 1, "is_pom_pom_regime": 0}
         try:
             if self.api_url:
                 r = requests.get(
@@ -336,6 +345,7 @@ class LiveFeatureService:
                             "finbert_score": float(payload.get("finbert_score", out["finbert_score"])),
                             "pred_volatility": float(payload.get("pred_volatility", out["pred_volatility"])),
                             "lpa_profile_id": int(payload.get("lpa_profile_id", out["lpa_profile_id"])),
+                            "is_pom_pom_regime": int(payload.get("is_pom_pom_regime", out["is_pom_pom_regime"])),
                         }
                     )
                     self._cache[key] = out
@@ -363,6 +373,7 @@ class LiveFeatureService:
                                 "finbert_score": float(pd.to_numeric(row.get("finbert_score", out["finbert_score"]), errors="coerce") or 0.0),
                                 "pred_volatility": float(pd.to_numeric(row.get("pred_volatility", row.get("volatility_20d", out["pred_volatility"])), errors="coerce") or 0.02),
                                 "lpa_profile_id": int(pd.to_numeric(row.get("lpa_profile_id", out["lpa_profile_id"]), errors="coerce") or 1),
+                                "is_pom_pom_regime": int(pd.to_numeric(row.get("is_pom_pom_regime", out["is_pom_pom_regime"]), errors="coerce") or 0),
                             }
                         )
         except Exception:
@@ -511,6 +522,7 @@ class RegimeExecutionStrategy(bt.Strategy):
         profile_id = int(read_feed("lpa_profile_id", 1))
         pred_vol = read_feed("pred_volatility", 0.02)
         finbert = read_feed("finbert_score", 0.0)
+        pom_pom_active = int(read_feed("is_pom_pom_regime", 0)) == 1
 
         if self.feature_service is not None:
             live_sym = self.live_symbol or ""
@@ -519,11 +531,14 @@ class RegimeExecutionStrategy(bt.Strategy):
             finbert = float(snap.get("finbert_score", finbert))
             pred_vol = float(snap.get("pred_volatility", pred_vol))
             profile_id = int(snap.get("lpa_profile_id", profile_id))
+            pom_pom_active = int(snap.get("is_pom_pom_regime", int(pom_pom_active))) == 1
 
         close_px = float(self.data.close[0])
         pv = float(self.broker.getvalue())
 
-        regime = self.state_machine.resolve(profile_id)
+        regime = self.state_machine.resolve(profile_id, pom_pom_active=pom_pom_active)
+        if pom_pom_active:
+            regime = replace(regime, k_stop_mult=min(regime.k_stop_mult, 0.6))
         stop_dist = self.risk.stop_distance(regime.k_stop_mult, pred_vol)
 
         if self.last_profile_id != profile_id:
@@ -533,6 +548,12 @@ class RegimeExecutionStrategy(bt.Strategy):
                 {"profile_id": profile_id, "action": regime.action, "timestamp": pd.Timestamp(dt).isoformat()},
             )
             self.last_profile_id = profile_id
+        if pom_pom_active:
+            self._send_alert(
+                "pompom_regime_active",
+                "POM_POM regime active: forcing 0% allocation and tighter stops.",
+                {"profile_id": profile_id, "timestamp": pd.Timestamp(dt).isoformat()},
+            )
 
         direction = self._signal_direction(finbert)
         f_star = self.risk.kelly_fraction(p=self.p.kelly_p, b=self.p.kelly_b)
@@ -579,7 +600,7 @@ class RegimeExecutionStrategy(bt.Strategy):
                 target_abs_size=target_abs,
                 regime_action=regime.action,
             )
-        elif regime.action == "AGGRESSIVE_DIRECTIONAL":
+        elif regime.action in {"AGGRESSIVE_DIRECTIONAL", "POM_POM_RISK_OFF"}:
             self._execute_parent_delta(
                 delta,
                 decision_price=close_px,
@@ -615,6 +636,7 @@ class RegimeExecutionStrategy(bt.Strategy):
                 "delta": delta,
                 "pred_volatility": pred_vol,
                 "stop_distance": stop_dist,
+                "is_pom_pom_regime": int(pom_pom_active),
             },
         )
         self._dispatch_next_child()
