@@ -1,6 +1,10 @@
 """
 Phase 1: Pre-Flight Data Fetch & ML Warm-up
 -------------------------------------------
+NOTE: This file is a required copy for the trading_service container.
+Both services run in separate Docker containers and cannot share Python modules
+directly. This copy exists so trading_engine.py can invoke --run-preflight, which
+uses PreflightWarmup defined here. Authoritative source: services/mlops/preflight_warmup.py
 1) Pull freshest OHLCV + macro data (yfinance) up to current day
 2) Update master dataset in-place
 3) Run synchronous training warm-up (collect + refit)

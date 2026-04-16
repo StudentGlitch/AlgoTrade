@@ -1,3 +1,8 @@
+# NOTE: This file is a required copy for the trading_service container.
+# Both services run in separate Docker containers and cannot share Python modules
+# directly. This copy exists so trading_engine.py can use --run-preflight, which
+# invokes PreflightWarmup (defined here) → ContinuousTrainingPipeline (train_pipeline.py).
+# Authoritative source: services/mlops/notifications.py
 from __future__ import annotations
 
 import json

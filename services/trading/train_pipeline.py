@@ -1,6 +1,11 @@
 """
 MLOps Continuous Training Pipeline
 ---------------------------------
+NOTE: This file is a required copy for the trading_service container.
+Both services run in separate Docker containers and cannot share Python modules
+directly. This copy exists because preflight_warmup.py (used by trading_engine.py
+via --run-preflight) imports ContinuousTrainingPipeline from here.
+Authoritative source: services/mlops/train_pipeline.py
 Operational modes:
 1) collect  : daily data collection + FinBERT scoring append
 2) refit    : weekly LPA/GMM + LSTM volatility retraining
