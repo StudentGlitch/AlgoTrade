@@ -446,9 +446,10 @@ class ContinuousTrainingPipeline:
 
         influx_rows = 0
         if self.db.available() and "date" in out_df.columns:
-            latest_date = pd.to_datetime(out_df["date"], errors="coerce").max()
+            date_series = pd.to_datetime(out_df["date"], errors="coerce")
+            latest_date = date_series.max()
             if pd.notna(latest_date):
-                latest_slice = out_df[pd.to_datetime(out_df["date"], errors="coerce") == latest_date]
+                latest_slice = out_df[date_series == latest_date]
                 influx_rows = self.db.write_market_panel(latest_slice)
         stats["influx_rows_written"] = int(influx_rows)
         self.repo.save(out_df)

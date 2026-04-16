@@ -36,12 +36,12 @@ class DatabaseConnector:
             self.write_api = self.client.write_api(
                 write_options=WriteOptions(
                     batch_size=5000,
-                    flush_interval=1000,
-                    jitter_interval=200,
-                    retry_interval=5000,
+                    flush_interval=1000,  # milliseconds
+                    jitter_interval=200,  # milliseconds
+                    retry_interval=5000,  # milliseconds
                     max_retries=5,
-                    max_retry_delay=30000,
-                    max_close_wait=120000,
+                    max_retry_delay=30000,  # milliseconds
+                    max_close_wait=120000,  # milliseconds
                     exponential_base=2,
                 )
             )
@@ -183,9 +183,9 @@ class SectorSentimentProxyImputer:
         out = out.merge(sector_daily, on=[self.date_col, sector_col], how="left")
         out = out.merge(global_daily, on=[self.date_col], how="left")
 
+        # Phase 1 rule: impute only for zero-mention rows.
         no_mentions = out[self.mention_col] <= 0
-        missing_sentiment = out[self.sentiment_col].isna()
-        needs_impute = no_mentions | missing_sentiment
+        needs_impute = no_mentions
 
         if self.microcap_flag_col in out.columns:
             microcap_mask = self._to_bool(out[self.microcap_flag_col])
@@ -244,7 +244,8 @@ class SectorSentimentProxyImputer:
             out["transfer_learning_anchor"] = 0
             return out
 
-        grp = out.groupby("company", as_index=False)[liquidity_source].median().rename(columns={liquidity_source: "_liquidity_med"})
+        grp = out.groupby("company", as_index=False)[liquidity_source].median()
+        grp = grp.rename(columns={liquidity_source: "_liquidity_med"})
         q1 = grp["_liquidity_med"].quantile(self.TIER_LOW_QUANTILE)
         q2 = grp["_liquidity_med"].quantile(self.TIER_HIGH_QUANTILE)
 
