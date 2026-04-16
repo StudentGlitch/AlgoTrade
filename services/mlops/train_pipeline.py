@@ -36,6 +36,27 @@ import tensorflow as tf
 from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.layers import Dense, Dropout, Input, LSTM
 from tensorflow.keras.models import Sequential
+from phase1_enterprise_data_pipeline import DatabaseConnector, SectorSentimentProxyImputer
+
+try:
+    from phase2_global_panel_lstm import GlobalPanelLSTMRefitter, PanelLSTMConfig
+except Exception:  # pragma: no cover - TF may be absent
+    GlobalPanelLSTMRefitter = None
+    PanelLSTMConfig = None
+
+try:
+    from phase3_portfolio_optimizer import E2EPortfolioOptimizer, E2EConfig, HRPAllocator
+except Exception:  # pragma: no cover
+    E2EPortfolioOptimizer = None
+    E2EConfig = None
+    HRPAllocator = None
+
+try:
+    from phase4_distributed_pipeline import RayDistributedPipeline, RayConfig, WebSocketMarketFeed
+except Exception:  # pragma: no cover
+    RayDistributedPipeline = None
+    RayConfig = None
+    WebSocketMarketFeed = None
 
 try:
     import torch
@@ -88,6 +109,18 @@ class PipelineConfig:
     daily_time: str = "16:10"      # local time
     weekly_time: str = "02:00"     # Saturday
     finbert_model_name: str = "ProsusAI/finbert"
+    # Phase 2: Global Panel LSTM
+    panel_lstm_epochs: int = 30
+    panel_lstm_batch_size: int = 512
+    panel_lstm_embedding_dim: int = 16
+    enable_panel_lstm: bool = True
+    # Phase 3: Portfolio optimisation
+    e2e_epochs: int = 40
+    enable_e2e_optimizer: bool = True
+    enable_hrp: bool = True
+    # Phase 4: Distributed training
+    distributed: bool = False
+    ray_num_cpus: Optional[int] = None
 
 
 class JsonLogger:
@@ -430,6 +463,12 @@ class ContinuousTrainingPipeline:
         self.logger = JsonLogger(cfg.log_path)
         self.collector = DailyCollector(cfg)
         self.mirofish = MirofishClient()
+        self.db = DatabaseConnector()
+        self.sentiment_proxy = SectorSentimentProxyImputer()
+
+    def close(self) -> None:
+        if self.db is not None:
+            self.db.close()
 
     def daily_collect_and_score(self) -> dict:
         df = self.repo.load()
@@ -438,6 +477,17 @@ class ContinuousTrainingPipeline:
 
         mf = self.mirofish.collect_latest() if self.mirofish.enabled() else pd.DataFrame()
         out_df, stats = self.collector.collect_daily(df, mf)
+        out_df, sentiment_proxy_stats = self.sentiment_proxy.apply(out_df)
+        stats.update(sentiment_proxy_stats)
+
+        influx_rows = 0
+        if self.db.available() and "date" in out_df.columns:
+            date_series = pd.to_datetime(out_df["date"], errors="coerce")
+            latest_date = date_series.max()
+            if pd.notna(latest_date):
+                latest_slice = out_df[date_series == latest_date]
+                influx_rows = self.db.write_market_panel(latest_slice)
+        stats["influx_rows_written"] = int(influx_rows)
         self.repo.save(out_df)
         self.logger.write("daily_collect_success", stats)
         return stats
@@ -452,12 +502,23 @@ class ContinuousTrainingPipeline:
         train_cut = max_date - pd.Timedelta(days=self.cfg.holdout_days)
         train_df = df[df["date"] >= start_cut].copy()
 
+        # Phase 4 (optional): distributed preprocessing via Ray
+        if self.cfg.distributed and RayDistributedPipeline is not None:
+            ray_cfg = RayConfig(num_cpus=self.cfg.ray_num_cpus)
+            ray_pipe = RayDistributedPipeline(ray_cfg)
+            try:
+                ray_pipe.distributed_preprocess(train_df)
+            except Exception as exc:
+                self.logger.write("ray_preprocess_warning", {"error": str(exc)})
+            finally:
+                ray_pipe.shutdown()
+
         # Refit LPA
         lpa = LPARefitter(self.cfg.lpa_components)
         train_df, lpa_stats = lpa.fit_transform(train_df, train_cutoff=train_cut)
         lpa_path = lpa.save(self.cfg.prod_dir)
 
-        # Refit LSTM
+        # Refit legacy per-asset LSTM
         lstm = LSTMRefitter(self.cfg.lstm_lookback, self.cfg.lstm_epochs, self.cfg.lstm_batch_size)
         lstm_stats = lstm.fit(train_df, train_cutoff=train_cut)
         lstm_path, scaler_path = lstm.save(self.cfg.prod_dir)
@@ -479,6 +540,54 @@ class ContinuousTrainingPipeline:
             "lpa_stats": lpa_stats,
             "lstm_stats": lstm_stats,
         }
+
+        # Phase 2: Global Panel LSTM with entity embeddings
+        if self.cfg.enable_panel_lstm and GlobalPanelLSTMRefitter is not None:
+            try:
+                panel_cfg = PanelLSTMConfig(
+                    lookback=self.cfg.lstm_lookback,
+                    epochs=self.cfg.panel_lstm_epochs,
+                    batch_size=self.cfg.panel_lstm_batch_size,
+                    embedding_dim=self.cfg.panel_lstm_embedding_dim,
+                    prod_dir=self.cfg.prod_dir,
+                )
+                panel_lstm = GlobalPanelLSTMRefitter(panel_cfg)
+                panel_stats = panel_lstm.fit(train_df, train_cutoff=train_cut)
+                panel_artifacts = panel_lstm.save()
+                result["panel_lstm_stats"] = panel_stats
+                result["panel_lstm_artifacts"] = panel_artifacts
+            except Exception as exc:
+                self.logger.write("panel_lstm_warning", {"error": str(exc)})
+                result["panel_lstm_stats"] = {"skipped": str(exc)}
+
+        # Phase 3a: E2E Portfolio Optimizer (Sharpe + TC + concentration loss)
+        if self.cfg.enable_e2e_optimizer and E2EPortfolioOptimizer is not None:
+            try:
+                e2e_cfg = E2EConfig(epochs=self.cfg.e2e_epochs, prod_dir=self.cfg.prod_dir)
+                e2e_opt = E2EPortfolioOptimizer(e2e_cfg)
+                e2e_stats = e2e_opt.fit(train_df, train_cutoff=train_cut)
+                e2e_arts = e2e_opt.save()
+                result["e2e_optimizer_stats"] = e2e_stats
+                result["e2e_optimizer_artifacts"] = e2e_arts
+            except Exception as exc:
+                self.logger.write("e2e_optimizer_warning", {"error": str(exc)})
+                result["e2e_optimizer_stats"] = {"skipped": str(exc)}
+
+        # Phase 3b: HRP Allocator (fallback portfolio allocation)
+        if self.cfg.enable_hrp and HRPAllocator is not None:
+            try:
+                hrp = HRPAllocator()
+                returns_pivot = train_df[train_df["date"] <= train_cut].pivot_table(
+                    index="date", columns="company", values="abs_return", aggfunc="mean"
+                )
+                hrp_weights = hrp.compute_hrp_weights(returns_pivot)
+                hrp_path = hrp.save(self.cfg.prod_dir)
+                result["hrp_allocator_path"] = hrp_path
+                result["hrp_n_assets"] = int(len(hrp_weights))
+            except Exception as exc:
+                self.logger.write("hrp_warning", {"error": str(exc)})
+                result["hrp_allocator_path"] = None
+
         self.logger.write("weekly_refit_success", result)
         return result
 
@@ -546,6 +655,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--lookback", type=int, default=10)
     p.add_argument("--daily-time", default="16:10")
     p.add_argument("--weekly-time", default="02:00")
+    p.add_argument("--panel-lstm-epochs", type=int, default=30)
+    p.add_argument("--e2e-epochs", type=int, default=40)
+    p.add_argument("--distributed", action="store_true", help="Enable Ray distributed preprocessing")
+    p.add_argument("--ray-num-cpus", type=int, default=None)
+    p.add_argument("--no-panel-lstm", action="store_true")
+    p.add_argument("--no-e2e", action="store_true")
+    p.add_argument("--no-hrp", action="store_true")
     return p.parse_args()
 
 
@@ -559,17 +675,26 @@ def main() -> None:
         lstm_lookback=args.lookback,
         daily_time=args.daily_time,
         weekly_time=args.weekly_time,
+        panel_lstm_epochs=args.panel_lstm_epochs,
+        e2e_epochs=args.e2e_epochs,
+        distributed=args.distributed,
+        ray_num_cpus=args.ray_num_cpus,
+        enable_panel_lstm=not args.no_panel_lstm,
+        enable_e2e_optimizer=not args.no_e2e,
+        enable_hrp=not args.no_hrp,
     )
     pipe = ContinuousTrainingPipeline(cfg)
-
-    if args.mode == "collect":
-        print(json.dumps(pipe.daily_collect_and_score(), indent=2))
-    elif args.mode == "refit":
-        print(json.dumps(pipe.weekly_refit(), indent=2))
-    elif args.mode == "once":
-        print(json.dumps(pipe.run_once(), indent=2))
-    else:
-        pipe.scheduler_daemon()
+    try:
+        if args.mode == "collect":
+            print(json.dumps(pipe.daily_collect_and_score(), indent=2))
+        elif args.mode == "refit":
+            print(json.dumps(pipe.weekly_refit(), indent=2))
+        elif args.mode == "once":
+            print(json.dumps(pipe.run_once(), indent=2))
+        else:
+            pipe.scheduler_daemon()
+    finally:
+        pipe.close()
 
 
 if __name__ == "__main__":

@@ -17,3 +17,10 @@ statsmodels
 linearmodels
 xgboost
 matplotlib
+influxdb-client
+scipy
+# Phase 4: Ray distributed computing (>=2.52.0 for DNS rebinding security fix)
+# Only ray.remote tasks are used; the Ray dashboard is disabled at init
+# (include_dashboard=False) to prevent unauthenticated access vulnerabilities.
+# Do NOT expose the Ray host/port to public networks.
+ray[default]>=2.52.0
