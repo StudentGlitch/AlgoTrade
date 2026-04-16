@@ -1,0 +1,540 @@
+# NotebookLM Research Export
+
+Consolidated context including new OpenBB data expansion for robust predictive modeling.
+
+---
+
+## Source: NotebookLM_Context_Summary.md
+
+# NotebookLM Context Summary — Social Media vs Stock Market Research
+
+## 1) Project scope (from this conversation)
+This research evolved in stages from classical econometrics to machine learning and then deep learning, using:
+- Dataset: `C:\Tugas Akhir\Full Data.csv` (daily panel data, Indonesian stocks, 2021–2023)
+- Core question: whether social-media attention (Facebook/YouTube) affects stock behavior
+- Shift in objective over time:
+  1. Initial focus: return / abnormal return direction
+  2. Advanced focus: volatility proxy (`absolute_return`) and event-driven dynamics
+
+## 2) Data context and quality findings
+- Rows: **10,154**
+- Companies: **20**
+- Date range: 2021-01-04 to 2023-12-29
+- Key issue: severe zero-inflation in YouTube metrics
+  - `pca_index_yt` ≈ **86% zeros**
+  - `views_yt`, `likes_yt`, `comments_yt` also heavily zero-inflated
+- FB vs YT multicollinearity was low (very small pair correlation), so severe collinearity was not the main constraint.
+
+## 3) What was implemented
+
+### A) Audit + baseline econometrics
+Generated:
+- `DATA_AUDIT.md`
+- `PHASE1_RESULTS.md` (Panel Fixed Effects)
+- `PHASE2_RESULTS.md` (VAR + Granger + event windows)
+
+Methods:
+- Panel Fixed Effects (`id_company` as entity, date as time)
+- Controls included trading activity (`vol`)
+- VAR/Granger with lag selected by information criteria
+- Event-window analysis around social spikes
+
+Main findings:
+- Social composite indices (`composite_index_fb`, `pca_index_yt`) were generally **not statistically significant** in contemporaneous FE return/residual models.
+- Granger causality tests showed **no strong directional causality** (FB -> return or return -> FB) at selected lags.
+
+### B) ML prediction stage (pre-deep-learning)
+Generated:
+- `PHASE3_RESULTS.md`
+- Feature importance plots (`feature_importance_rf.png`, `feature_importance_xgb.png`)
+
+Methods:
+- Random Forest regression + XGBoost classification
+- Strict time-series split (no random K-fold)
+
+Main findings:
+- Directional prediction performance was modest (~52% accuracy range)
+- Some social lag features contributed importance, but signal strength was limited.
+
+### C) Deeper robustness extension using skill-guided workflow
+Generated:
+- `DEEP_RESEARCH_REPORT.md`
+- `company_level_effects.csv`
+
+Methods:
+- Two-way FE (entity + time effects), lag and interaction terms, diagnostics (BP/VIF), heterogeneity by company, attention-regime tests, predictive uplift checks.
+
+Main findings:
+- Robustness checks still showed weak/insignificant social coefficients in most settings.
+- Small but measurable predictive uplift when social features were added in volatility-oriented forecasting tests.
+
+### D) Advanced deep-learning stage (LSTM, volatility focus)
+Generated:
+- `PREPROCESSING_AUDIT.md`
+- `EVENT_STUDY_RESULTS.md` (+ `event_study_cav_plot.png`)
+- `PHASE2_LSTM_RESULTS.md` (+ `lstm_actual_vs_predicted.png`)
+- `LSTM_FINAL_REPORT.md`
+
+Preprocessing changes:
+- Target shifted to `absolute_return = abs(return)` (volatility proxy)
+- Zero-inflation handling:
+  - Created `yt_spike` using top-5% threshold of **non-zero** `pca_index_yt`
+  - Threshold used: **25.1425**
+- New engineered features:
+  - `fb_ma3`, `fb_ma5`
+  - `fb_pct_change`
+  - `vol_lag1`
+  - `fb_vol_interaction`
+
+Event study result:
+- CAV around `yt_spike` events on window [-2, +5]
+- 70 valid event windows
+- Average cumulative effect stayed small and near zero by the end of the window.
+
+LSTM result:
+- Sequence design respected company boundaries (no cross-company mixing)
+- Chronological split (train <= 2022, test = 2023), no random shuffling
+- Performance vs persistence baseline:
+  - **LSTM RMSE: 0.012825** vs baseline RMSE: **0.016507**
+  - **LSTM MAE: 0.009270** vs baseline MAE: **0.010965**
+- Interpretation: sequential model improved volatility prediction relative to naive baseline.
+
+## 4) Overall conclusion
+Across all stages:
+1. Strong causal/inferential evidence linking social composite indices to immediate stock return anomalies was weak.
+2. Social data became more useful when reframed as volatility/event information rather than direction-only return prediction.
+3. Zero-inflation handling (YT spike encoding) and temporal sequence modeling (LSTM) provided clearer predictive gains than earlier directional setups.
+
+## 5) Key files to load in NotebookLM first
+1. `NotebookLM_Research_Export.md` (full consolidated context)
+2. `LSTM_FINAL_REPORT.md` (final deep-learning stage)
+3. `DEEP_RESEARCH_REPORT.md` (robustness and advanced diagnostics)
+4. `EVENT_STUDY_RESULTS.md` and `PREPROCESSING_AUDIT.md` (volatility pivot details)
+5. `FINAL_REPORT.md` (cross-phase synthesis)
+
+
+---
+
+## Source: OPENBB_DATA_EXPANSION_REPORT.md
+
+# OPENBB Data Expansion Report
+
+## Objective
+Expand the research dataset with newer market data, analysis features, macro context, and news sentiment proxies to support stronger predictive modeling.
+
+## Data collection
+- Source platform: **OpenBB** (`yfinance` provider where no API key is required)
+- Start date: **2024-01-01**
+- End date: **2026-04-15**
+- Target symbols attempted: **20**
+- Symbols fetched successfully: **20**
+- Failed symbols: **0**
+
+## Output dataset
+- File: `C:\Tugas Akhir\research\openbb_enriched_stock_data_2024_onward.csv`
+- Shape: **10760 rows x 35 columns**
+- Date coverage: **2024-01-02 to 2026-04-15** (538 trading dates)
+
+## Added feature groups
+1. Price/return features: return, log_return, abs_return, range_pct
+2. Momentum/technical: SMA(5/20), SMA ratio, momentum(5/20), RSI14
+3. Volatility/liquidity: volatility_5d, volatility_20d, volume_z20, turnover_proxy
+4. Macro context: JKSE, VIX, USD/IDR, oil, gold (+ daily returns)
+5. News context: per-symbol `news_count`, `news_sentiment_mean`, `news_sentiment_std`
+
+## Coverage by company
+| company   |   rows |
+|:----------|-------:|
+| ADRO      |    538 |
+| ANTM      |    538 |
+| ASII      |    538 |
+| BBCA      |    538 |
+| BBNI      |    538 |
+| BBRI      |    538 |
+| BBTN      |    538 |
+| BMRI      |    538 |
+| EXCL      |    538 |
+| INCO      |    538 |
+| INDF      |    538 |
+| ITMG      |    538 |
+| KLBF      |    538 |
+| PGAS      |    538 |
+| PTBA      |    538 |
+| SMGR      |    538 |
+| TLKM      |    538 |
+| TPIA      |    538 |
+| UNTR      |    538 |
+| UNVR      |    538 |
+
+## Notes for predictive modeling
+- This dataset is ready for chronological train/validation/test workflows.
+- `abs_return` and rolling volatility features are suitable volatility targets.
+- Macro and news columns can be tested as exogenous predictors.
+
+## Column inventory
+- Macro columns: `jkse_close, jkse_close_ret, vix_close, vix_close_ret, usd_idr_close, usd_idr_close_ret, oil_close, oil_close_ret, gold_close, gold_close_ret`
+- Model-ready fields count (excluding id/date): **32**
+
+---
+
+## Source: PREPROCESSING_AUDIT.md
+
+# PREPROCESSING_AUDIT
+
+## 1) Input and target shift
+- Source dataset: `C:\Tugas Akhir\Full Data.csv`
+- Rows after basic cleaning: **10154**
+- New target variable: `absolute_return = abs(return)` (volatility proxy)
+- Alternative targets retained: `vol`, `turnover`
+
+## 2) Zero-inflation handling (YouTube)
+- YT source used for spike binning: `pca_index_yt`
+- Zero share in `pca_index_yt`: **86.02%**
+- Top-5% (non-zero) threshold: **25.142500**
+- Event variable: `yt_spike = 1 if YT source >= threshold and >0, else 0`
+- Spike event rate: **0.70%**
+
+## 3) Engineered features
+- `fb_ma3`: 3-day rolling mean of `composite_index_fb` (within company)
+- `fb_ma5`: 5-day rolling mean of `composite_index_fb` (within company)
+- `fb_pct_change`: daily pct change of `composite_index_fb` (within company)
+- `vol_lag1`: lagged `vol` by 1 day (within company)
+- `fb_vol_interaction = composite_index_fb * vol_lag1`
+
+## 4) Basic statistics of new variables
+|                    |   count |        mean |          std |   min |          25% |          50% |         75% |            max |
+|:-------------------|--------:|------------:|-------------:|------:|-------------:|-------------:|------------:|---------------:|
+| absolute_return    |   10154 | 0.013847    |  0.014272    |     0 |  0.004115    |  0.00995     | 0.018868    |    0.25        |
+| yt_spike           |   10154 | 0.006992    |  0.083331    |     0 |  0           |  0           | 0           |    1           |
+| composite_index_fb |   10154 | 3.94639     |  7.57844     |     0 |  0.36        |  1.405       | 4.12        |  100           |
+| fb_ma3             |   10154 | 3.95095     |  5.04632     |     0 |  0.566667    |  2.31        | 5.39        |   57.94        |
+| fb_ma5             |   10154 | 3.94409     |  4.39641     |     0 |  0.7385      |  2.802       | 5.392       |   57.94        |
+| fb_pct_change      |    9871 | 4.24995     | 44.7169      |    -1 | -0.614531    | -0.019048    | 1.29254     | 2504           |
+| vol_lag1           |   10134 | 5.32792e+07 |  7.07029e+07 | 68400 |  1.22509e+07 |  3.55284e+07 | 7.14928e+07 |    1.98321e+09 |
+| fb_vol_interaction |   10134 | 2.35545e+08 |  9.85805e+08 |     0 |  7.83694e+06 |  4.19397e+07 | 1.6127e+08  |    5.18468e+10 |
+
+## 5) Output artifacts
+- Preprocessed dataset: `C:\Tugas Akhir\research\phase4_preprocessed.csv`
+- Audit report: `C:\Tugas Akhir\PREPROCESSING_AUDIT.md`
+
+## 6) Phase 0 stop point
+- Phase 0 preprocessing completed.
+- **STOP POINT:** Awaiting approval before Phase 1 (Event Study around `yt_spike`).
+
+---
+
+## Source: EVENT_STUDY_RESULTS.md
+
+# EVENT_STUDY_RESULTS — Phase 1
+
+## Setup
+- Event definition: `yt_spike == 1`
+- Window: **[-2, +5]** around event day
+- Metric: **CAV** (Cumulative Abnormal Volatility)
+- Abnormal volatility: `absolute_return - company_mean(absolute_return)`
+- Valid event windows used: **70**
+
+## Average event profile
+|   tau |    avg_av |   avg_cav |
+|------:|----------:|----------:|
+|    -2 |  0.000893 |  0.000893 |
+|    -1 |  0.000601 |  0.001494 |
+|     0 | -0.001105 |  0.00039  |
+|     1 | -0.000197 |  0.000193 |
+|     2 | -0.000419 | -0.000227 |
+|     3 |  0.000605 |  0.000378 |
+|     4 | -0.001301 | -0.000922 |
+|     5 |  0.000854 | -6.8e-05  |
+
+## Plot
+- Saved plot: `C:\Tugas Akhir\research\event_study_cav_plot.png`
+
+## Interpretation
+- `avg_av` gives mean abnormal volatility at each event-time tau.
+- `avg_cav` accumulates abnormal volatility from tau=-2 to each tau.
+- This isolates volatility dynamics specifically around YouTube spike days.
+
+---
+
+## Source: LSTM_FINAL_REPORT.md
+
+# LSTM_FINAL_REPORT — Advanced Deep Learning for Volatility & Social Media
+
+## Objective
+Shift from return-direction modeling to volatility/activity modeling, handle YouTube zero-inflation explicitly, and evaluate whether sequence models (LSTM) improve prediction of market activity.
+
+## Data
+- Source: `C:\Tugas Akhir\Full Data.csv`
+- Preprocessed output: `C:\Tugas Akhir\research\phase4_preprocessed.csv`
+- Panel scope: 20 companies, 2021–2023 period
+
+## Phase 0 — Preprocessing summary
+See: `C:\Tugas Akhir\PREPROCESSING_AUDIT.md`
+
+Implemented:
+1. Target shift to volatility proxy:
+   - `absolute_return = abs(return)`
+2. Zero-inflation handling for YouTube:
+   - Source: `pca_index_yt`
+   - Zero share: **86.02%**
+   - Top-5% non-zero threshold: **25.1425**
+   - Event variable: `yt_spike`
+3. Feature engineering:
+   - `fb_ma3`, `fb_ma5`
+   - `fb_pct_change`
+   - `vol_lag1`
+   - `fb_vol_interaction = composite_index_fb * vol_lag1`
+
+## Phase 1 — Event study around YouTube spikes
+See: `C:\Tugas Akhir\EVENT_STUDY_RESULTS.md`
+Plot: `C:\Tugas Akhir\research\event_study_cav_plot.png`
+
+Design:
+- Event: `yt_spike == 1`
+- Window: **[-2, +5]**
+- Metric: **CAV** based on abnormal volatility:
+  - `abnormal_volatility = absolute_return - company_mean(absolute_return)`
+
+Findings:
+- Valid event windows: **70**
+- Average CAV path is small and oscillatory:
+  - Starts slightly positive pre-event
+  - Turns near zero by tau=+5 (`avg_cav` ≈ -0.000068)
+- Interpretation: YouTube spikes are associated with localized volatility perturbations, but not a large persistent cumulative volatility drift in this sample.
+
+## Phase 2 — LSTM volatility prediction
+See: `C:\Tugas Akhir\research\PHASE2_LSTM_RESULTS.md`
+Plot: `C:\Tugas Akhir\research\lstm_actual_vs_predicted.png`
+Script: `C:\Tugas Akhir\research\phase4_lstm_model.py`
+
+Model setup:
+- Target: `absolute_return`
+- Lookback: **7 timesteps**
+- Features include engineered social and market variables (`yt_spike`, FB rolling stats, lagged volume interaction, etc.)
+- Sequence generation is strictly per company (no boundary crossing)
+- Chronological split:
+  - Train: <= 2022
+  - Test: 2023
+  - Validation: tail of training period
+- Training with `shuffle=False` and early stopping
+
+Performance:
+- **LSTM RMSE:** 0.012825
+- **LSTM MAE:** 0.009270
+- **Baseline RMSE (yesterday volatility):** 0.016507
+- **Baseline MAE (yesterday volatility):** 0.010965
+
+Conclusion:
+- LSTM outperforms a naive persistence baseline on both RMSE and MAE, indicating incremental predictive value from sequential social+market features for volatility proxy forecasting.
+
+## Verification checklist
+- [x] Phase 0 transforms target to `absolute_return` and bins zero-inflated YT data using top-5% non-zero threshold.
+- [x] Phase 1 computes event-window CAV specifically around `yt_spike` days.
+- [x] Phase 2 sequences are created per company without mixing histories.
+- [x] Phase 2 train/test split is chronological (no random shuffling / no temporal leakage).
+
+## Deliverables produced
+1. `C:\Tugas Akhir\PREPROCESSING_AUDIT.md`
+2. `C:\Tugas Akhir\EVENT_STUDY_RESULTS.md`
+3. `C:\Tugas Akhir\research\phase4_event_study.py`
+4. `C:\Tugas Akhir\research\phase4_lstm_model.py`
+5. `C:\Tugas Akhir\research\PHASE2_LSTM_RESULTS.md`
+6. `C:\Tugas Akhir\research\event_study_cav_plot.png`
+7. `C:\Tugas Akhir\research\lstm_actual_vs_predicted.png`
+8. `C:\Tugas Akhir\LSTM_FINAL_REPORT.md`
+
+
+---
+
+## Source: FINAL_REPORT.md
+
+# FINAL_REPORT — Social Media vs Stock Prices
+
+## Research objective
+Evaluate whether social media engagement metrics (Facebook and YouTube) are associated with Indonesian stock performance, both for inference (econometrics) and prediction (machine learning).
+
+## Data and scope
+- Dataset: `C:\Tugas Akhir\Full Data.csv`
+- Coverage: 10,154 rows, 20 companies, 2021-01-04 to 2023-12-29
+- Core variables:
+  - Financial: `return`, `residual`, `vol`, `turnover`
+  - Social: `composite_index_fb`, `pca_index_yt` (+ underlying social metrics)
+
+## Phase 0 summary (audit/EDA)
+Source: `C:\Tugas Akhir\DATA_AUDIT.md`
+
+Key findings:
+- Strong zero-inflation in several YouTube indicators:
+  - `pca_index_yt` 86.02% zeros
+  - `views_yt` 85.39% zeros
+  - `comments_yt` 90.68% zeros
+- FB/YT multicollinearity is low:
+  - Corr(`composite_index_fb`, `pca_index_yt`) = 0.025
+- ADF stationarity checks (aggregated daily means) indicate stationarity for:
+  - `return`, `residual`, `composite_index_fb`, `pca_index_yt` (all p < 0.05)
+
+## Phase 1 summary (Panel Fixed Effects)
+Source: `C:\Tugas Akhir\research\PHASE1_RESULTS.md`
+
+Model:
+- Panel index: `id_company` x `tanggal_stata`
+- Entity fixed effects (company FE), clustered SE by entity
+- Regressors: `composite_index_fb`, `pca_index_yt`
+- Control: `vol`
+
+Primary outcome (`residual` as DV):
+- `composite_index_fb`: coef -0.000019, p = 0.516 (not significant)
+- `pca_index_yt`: coef -0.000009, p = 0.775 (not significant)
+- Within R² = 0.000238
+
+Robustness (`return` as DV):
+- `composite_index_fb`: p = 0.408 (not significant)
+- `pca_index_yt`: p = 0.157 (not significant)
+- `vol` significant; social indices remain not significant
+
+Conclusion:
+- No statistically significant **contemporaneous** effect of the two social composite indices on returns/abnormal returns in FE specification.
+
+## Phase 2 summary (VAR + Granger + Event Study)
+Source: `C:\Tugas Akhir\research\PHASE2_RESULTS.md`
+
+Setup:
+- Daily aggregated panel mean series
+- VAR variables: `return`, `composite_index_fb`, `pca_index_yt`
+- Optimal lag selected by BIC: 1
+
+Granger causality:
+- `composite_index_fb` -> `return`: p = 0.232956 (no evidence)
+- `return` -> `composite_index_fb`: p = 0.114921 (no evidence)
+
+Event study (top 1% spikes in `views_fb`/`views_yt`, CAR[-1,+1] using `residual`):
+- 16 event dates
+- Mean CAR = -0.000051
+- Median CAR = 0.002341
+
+Conclusion:
+- No strong directional predictability between FB composite index and return under this lag structure.
+- Spike events show mixed CAR signs, with near-zero average effect.
+
+## Phase 3 summary (Predictive ML)
+Source: `C:\Tugas Akhir\research\PHASE3_RESULTS.md`
+
+Task:
+- Forecast next-day return and direction using social features at t with lagged features (t-1, t-2)
+- Strict `TimeSeriesSplit` (5 folds) to avoid leakage
+
+Models and performance:
+- Random Forest Regressor (target: next-day return)
+  - Mean RMSE = 0.009359
+- XGBoost Classifier (target: next-day up/down)
+  - Mean Accuracy = 0.520661
+  - Mean F1 = 0.532175
+
+Feature importance highlights:
+- Repeatedly important: lagged Facebook activity terms and lagged composite FB index
+- YT variables appear among top predictors in some folds, but signal remains modest
+
+Conclusion:
+- Predictive performance is only modestly above random baseline for direction classification, suggesting weak but non-zero exploitable signal from social data in this setup.
+
+## Verification checklist
+- [x] Phase 0 checks stationarity before time-series modeling (ADF, autolag=AIC).
+- [x] Phase 1 uses entity Fixed Effects for company-specific baseline control.
+- [x] Phase 2 Granger uses lag length selected via information criteria (BIC chosen from VAR order selection).
+- [x] Phase 3 uses strictly time-ordered splits (no random K-fold), preventing leakage.
+
+## Overall conclusion
+Across FE econometrics, VAR/Granger causality, and time-series ML:
+- Composite social indices do **not** show robust contemporaneous or Granger-causal effects on returns in this sample.
+- Social metrics contribute limited predictive information; models achieve only moderate directional accuracy.
+- Data sparsity (especially YT zero inflation) is a key limitation and likely attenuates signal strength.
+
+
+---
+
+## Source: DEEP_RESEARCH_REPORT.md
+
+# DEEP_RESEARCH_REPORT — Skill-Guided Extensions
+
+This deeper pass applies methods inspired by the installed `statsmodels` and `social-media-analyzer` skills.
+
+## 1) Two-way Fixed Effects robustness
+- Entity FE + Time FE with two-way clustered SE (entity and time).
+
+### Model A: Contemporaneous effects (`residual`)
+- Within R²: **0.000193**
+|                    |   coef |   std_err |         t |        p |
+|:-------------------|-------:|----------:|----------:|---------:|
+| composite_index_fb | -2e-06 |   2.6e-05 | -0.059904 | 0.952233 |
+| pca_index_yt       | -5e-06 |   3.3e-05 | -0.149825 | 0.880906 |
+| vol                | -0     |   0       | -0.676674 | 0.49863  |
+
+### Model B: Lagged effects (t-1, t-2)
+- Within R²: **0.000518**
+|                         |     coef |   std_err |         t |        p |
+|:------------------------|---------:|----------:|----------:|---------:|
+| composite_index_fb_lag1 |  1.5e-05 |   3.1e-05 |  0.485148 | 0.627583 |
+| pca_index_yt_lag1       |  4.4e-05 |   4.8e-05 |  0.915966 | 0.359708 |
+| composite_index_fb_lag2 |  2.2e-05 |   2.3e-05 |  0.962285 | 0.335931 |
+| pca_index_yt_lag2       | -1e-05   |   3.6e-05 | -0.270015 | 0.787155 |
+| vol                     | -0       |   0       | -1.08688  | 0.277118 |
+
+### Model C: Interaction effect (`FB × YT`)
+- Within R²: **0.000193**
+|                    |   coef |   std_err |         t |        p |
+|:-------------------|-------:|----------:|----------:|---------:|
+| composite_index_fb | -1e-06 |   2.7e-05 | -0.036411 | 0.970955 |
+| pca_index_yt       | -4e-06 |   3.7e-05 | -0.105004 | 0.916375 |
+| fb_x_yt            | -0     |   1e-06   | -0.147755 | 0.88254  |
+| vol                | -0     |   0       | -0.67619  | 0.498937 |
+
+## 2) Diagnostics (`statsmodels` workflow)
+- Breusch-Pagan p-value (pooled proxy): **1.92761e-15**
+- Durbin-Watson statistic (pooled proxy): **2.1279**
+- VIF table:
+| variable           |    vif |
+|:-------------------|-------:|
+| vol                | 1.0023 |
+| composite_index_fb | 1.002  |
+| pca_index_yt       | 1.0016 |
+
+## 3) Company-level heterogeneity
+- Company models estimated: **18**
+- Significant FB effects (p<0.05): **0/18**
+- Significant YT effects (p<0.05): **1/18**
+- Detailed file: `C:\Tugas Akhir\research\company_level_effects.csv`
+
+| id_company   |   n_obs |   coef_fb |     p_fb |   coef_yt |     p_yt |
+|:-------------|--------:|----------:|---------:|----------:|---------:|
+| ANTM         |     326 |  0.000433 | 0.246487 |  0.000127 | 0.124053 |
+| ASII         |     543 | -2.5e-05  | 0.850804 | -0.000703 | 0.110343 |
+| BBCA         |     613 | -0.000173 | 0.220941 |  0.000165 | 0.082345 |
+| BBNI         |     717 | -0.000179 | 0.176974 | -0.00014  | 0.038523 |
+| BBRI         |     708 | -8.7e-05  | 0.224998 |  4.9e-05  | 0.617957 |
+| BBTN         |     618 | -7e-05    | 0.627748 |  0.000638 | 0.394655 |
+| BMRI         |     622 | -2.6e-05  | 0.713997 |  1e-06    | 0.991824 |
+| EXCL         |     609 | -0.000116 | 0.2135   | -0.000296 | 0.365501 |
+| INCO         |     352 |  0.000208 | 0.669044 |  0.000122 | 0.836419 |
+| INDF         |     684 |  1.6e-05  | 0.835447 |  0.000163 | 0.49984  |
+| ITMG         |     269 |  0.000156 | 0.509794 |  0.000193 | 0.952128 |
+| KLBF         |     634 | -5.7e-05  | 0.633208 | -8.1e-05  | 0.927889 |
+
+## 4) Social engagement benchmark layer (`social-media-analyzer` style)
+- FB engagement proxy mean: **23.3942%**, median: **5.6149%** (formula: (likes+comments+shares)/views_fb * 100).
+- Benchmark reference from skill: Facebook average ~0.07%, good ~0.5–1.0%, excellent >1.0%.
+
+## 5) High-attention regime asymmetry
+- Next-day residual mean when social attention in top decile: **0.000454** vs others **-0.000050**.
+- Welch t-test: t = **0.4801**, p = **0.632315**.
+
+## 6) Predictive uplift from social features
+- RF baseline RMSE (no social features): **0.009773**
+- RF + social RMSE: **0.009266**
+- RMSE improvement (positive is better): **0.000508**
+
+## Bottom line
+- Two-way FE and lagged/interaction extensions are included for deeper causal structure checks.
+- Diagnostics, heterogeneity, and regime tests provide a stronger robustness layer beyond the initial phases.
+- Predictive uplift quantifies incremental value of social signals over baseline market controls.
+
+

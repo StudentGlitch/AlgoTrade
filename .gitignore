@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+env/
+
+# Secrets and local env
+.env
+research/.env
+*.pem
+*.key
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs / runtime
+*.log
+*.jsonl
+production/*.log
+production/logs/
+
+# Large generated artifacts / data outputs
+*.h5
+*.pkl
+*.png
+*.csv
+*.xlsx
+*.xls
+*.tmp
+
+# Keep production model directory structure, but not model binaries by default
+production/models/*.h5
+production/models/*.pkl
+!production/models/.gitkeep

@@ -1,0 +1,61 @@
+version: "3.9"
+
+services:
+  mlops_service:
+    build:
+      context: .
+      dockerfile: research/Dockerfile
+    container_name: mlops_service
+    env_file:
+      - .env
+    volumes:
+      - ./research/phase6_lpa_enriched.csv:/app/phase6_lpa_enriched.csv
+      - ./production/models:/app/models
+      - ./production:/app/logs
+    command: >
+      python /app/train_pipeline.py
+      --mode scheduler
+      --master-data /app/phase6_lpa_enriched.csv
+      --prod-dir /app/models
+      --log-path /app/logs/phase1_train_log.jsonl
+      --daily-time ${DAILY_COLLECT_TIME:-16:10}
+      --weekly-time ${WEEKLY_REFIT_TIME:-02:00}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; print(os.path.exists('/app/train_pipeline.py'))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  trading_service:
+    build:
+      context: .
+      dockerfile: research/Dockerfile
+    container_name: trading_service
+    env_file:
+      - .env
+    depends_on:
+      - mlops_service
+    volumes:
+      - ./research/phase6_lpa_enriched.csv:/app/phase6_lpa_enriched.csv
+      - ./production/models:/app/models
+      - ./production:/app/logs
+    command: >
+      python /app/trading_engine.py
+      --mode live
+      --broker ib
+      --paper
+      --symbol ${LIVE_SYMBOL:-BBRI-STK-SMART-USD}
+      --run-preflight
+      --preflight-master-data ${PREFLIGHT_MASTER_DATA:-/app/phase6_lpa_enriched.csv}
+      --preflight-prod-dir ${PREFLIGHT_PROD_DIR:-/app/models}
+      --preflight-log-path ${PREFLIGHT_LOG_PATH:-/app/logs/phase1_train_log.jsonl}
+      --preflight-report ${PREFLIGHT_REPORT_PATH:-/app/logs/PREFLIGHT_WARMUP_REPORT.md}
+      --preflight-lookback-days ${PREFLIGHT_LOOKBACK_DAYS:-90}
+      --preflight-warmup-epochs ${PREFLIGHT_WARMUP_EPOCHS:-6}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; print(os.path.exists('/app/trading_engine.py'))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

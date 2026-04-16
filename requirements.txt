@@ -1,0 +1,14 @@
+numpy
+pandas
+scikit-learn
+tensorflow
+torch
+transformers
+yfinance
+openbb
+schedule
+requests
+backtrader
+ib_insync
+python-dotenv
+ta-lib

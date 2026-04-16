@@ -1,0 +1,105 @@
+# NotebookLM Context Summary — Social Media vs Stock Market Research
+
+## 1) Project scope (from this conversation)
+This research evolved in stages from classical econometrics to machine learning and then deep learning, using:
+- Dataset: `C:\Tugas Akhir\Full Data.csv` (daily panel data, Indonesian stocks, 2021–2023)
+- Core question: whether social-media attention (Facebook/YouTube) affects stock behavior
+- Shift in objective over time:
+  1. Initial focus: return / abnormal return direction
+  2. Advanced focus: volatility proxy (`absolute_return`) and event-driven dynamics
+
+## 2) Data context and quality findings
+- Rows: **10,154**
+- Companies: **20**
+- Date range: 2021-01-04 to 2023-12-29
+- Key issue: severe zero-inflation in YouTube metrics
+  - `pca_index_yt` ≈ **86% zeros**
+  - `views_yt`, `likes_yt`, `comments_yt` also heavily zero-inflated
+- FB vs YT multicollinearity was low (very small pair correlation), so severe collinearity was not the main constraint.
+
+## 3) What was implemented
+
+### A) Audit + baseline econometrics
+Generated:
+- `DATA_AUDIT.md`
+- `PHASE1_RESULTS.md` (Panel Fixed Effects)
+- `PHASE2_RESULTS.md` (VAR + Granger + event windows)
+
+Methods:
+- Panel Fixed Effects (`id_company` as entity, date as time)
+- Controls included trading activity (`vol`)
+- VAR/Granger with lag selected by information criteria
+- Event-window analysis around social spikes
+
+Main findings:
+- Social composite indices (`composite_index_fb`, `pca_index_yt`) were generally **not statistically significant** in contemporaneous FE return/residual models.
+- Granger causality tests showed **no strong directional causality** (FB -> return or return -> FB) at selected lags.
+
+### B) ML prediction stage (pre-deep-learning)
+Generated:
+- `PHASE3_RESULTS.md`
+- Feature importance plots (`feature_importance_rf.png`, `feature_importance_xgb.png`)
+
+Methods:
+- Random Forest regression + XGBoost classification
+- Strict time-series split (no random K-fold)
+
+Main findings:
+- Directional prediction performance was modest (~52% accuracy range)
+- Some social lag features contributed importance, but signal strength was limited.
+
+### C) Deeper robustness extension using skill-guided workflow
+Generated:
+- `DEEP_RESEARCH_REPORT.md`
+- `company_level_effects.csv`
+
+Methods:
+- Two-way FE (entity + time effects), lag and interaction terms, diagnostics (BP/VIF), heterogeneity by company, attention-regime tests, predictive uplift checks.
+
+Main findings:
+- Robustness checks still showed weak/insignificant social coefficients in most settings.
+- Small but measurable predictive uplift when social features were added in volatility-oriented forecasting tests.
+
+### D) Advanced deep-learning stage (LSTM, volatility focus)
+Generated:
+- `PREPROCESSING_AUDIT.md`
+- `EVENT_STUDY_RESULTS.md` (+ `event_study_cav_plot.png`)
+- `PHASE2_LSTM_RESULTS.md` (+ `lstm_actual_vs_predicted.png`)
+- `LSTM_FINAL_REPORT.md`
+
+Preprocessing changes:
+- Target shifted to `absolute_return = abs(return)` (volatility proxy)
+- Zero-inflation handling:
+  - Created `yt_spike` using top-5% threshold of **non-zero** `pca_index_yt`
+  - Threshold used: **25.1425**
+- New engineered features:
+  - `fb_ma3`, `fb_ma5`
+  - `fb_pct_change`
+  - `vol_lag1`
+  - `fb_vol_interaction`
+
+Event study result:
+- CAV around `yt_spike` events on window [-2, +5]
+- 70 valid event windows
+- Average cumulative effect stayed small and near zero by the end of the window.
+
+LSTM result:
+- Sequence design respected company boundaries (no cross-company mixing)
+- Chronological split (train <= 2022, test = 2023), no random shuffling
+- Performance vs persistence baseline:
+  - **LSTM RMSE: 0.012825** vs baseline RMSE: **0.016507**
+  - **LSTM MAE: 0.009270** vs baseline MAE: **0.010965**
+- Interpretation: sequential model improved volatility prediction relative to naive baseline.
+
+## 4) Overall conclusion
+Across all stages:
+1. Strong causal/inferential evidence linking social composite indices to immediate stock return anomalies was weak.
+2. Social data became more useful when reframed as volatility/event information rather than direction-only return prediction.
+3. Zero-inflation handling (YT spike encoding) and temporal sequence modeling (LSTM) provided clearer predictive gains than earlier directional setups.
+
+## 5) Key files to load in NotebookLM first
+1. `NotebookLM_Research_Export.md` (full consolidated context)
+2. `LSTM_FINAL_REPORT.md` (final deep-learning stage)
+3. `DEEP_RESEARCH_REPORT.md` (robustness and advanced diagnostics)
+4. `EVENT_STUDY_RESULTS.md` and `PREPROCESSING_AUDIT.md` (volatility pivot details)
+5. `FINAL_REPORT.md` (cross-phase synthesis)
