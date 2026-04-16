@@ -1,12 +1,14 @@
 import os
+from pathlib import Path
 import numpy as np
 import pandas as pd
 from statsmodels.tsa.api import VAR
 from statsmodels.tsa.stattools import grangercausalitytests
 
 
-DATA_PATH = r"C:\Tugas Akhir\Full Data.csv"
-OUT_MD = r"C:\Tugas Akhir\research\PHASE2_RESULTS.md"
+_SHARED = Path(__file__).resolve().parent.parent.parent / "shared"
+DATA_PATH = str(_SHARED / "data" / "Full Data.csv")
+OUT_MD = str(_SHARED / "data" / "PHASE2_RESULTS.md")
 
 
 def choose_lag(var_data: pd.DataFrame, maxlags: int = 10) -> tuple[int, str]:

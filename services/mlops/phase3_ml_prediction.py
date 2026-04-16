@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -8,10 +9,11 @@ from sklearn.model_selection import TimeSeriesSplit
 from xgboost import XGBClassifier
 
 
-DATA_PATH = r"C:\Tugas Akhir\Full Data.csv"
-OUT_MD = r"C:\Tugas Akhir\research\PHASE3_RESULTS.md"
-OUT_RF_PNG = r"C:\Tugas Akhir\research\feature_importance_rf.png"
-OUT_XGB_PNG = r"C:\Tugas Akhir\research\feature_importance_xgb.png"
+_SHARED = Path(__file__).resolve().parent.parent.parent / "shared"
+DATA_PATH = str(_SHARED / "data" / "Full Data.csv")
+OUT_MD = str(_SHARED / "data" / "PHASE3_RESULTS.md")
+OUT_RF_PNG = str(_SHARED / "data" / "feature_importance_rf.png")
+OUT_XGB_PNG = str(_SHARED / "data" / "feature_importance_xgb.png")
 
 
 def plot_importance(names, values, title, out_path):

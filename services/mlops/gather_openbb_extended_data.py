@@ -1,15 +1,17 @@
 import os
 import warnings
 from datetime import datetime
+from pathlib import Path
 import numpy as np
 import pandas as pd
 from openbb import obb
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 
-BASE_DATA = r"C:\Tugas Akhir\Full Data.csv"
-OUT_DATA = r"C:\Tugas Akhir\research\openbb_enriched_stock_data_2024_onward.csv"
-OUT_REPORT = r"C:\Tugas Akhir\OPENBB_DATA_EXPANSION_REPORT.md"
+_SHARED = Path(__file__).resolve().parent.parent.parent / "shared"
+BASE_DATA = str(_SHARED / "data" / "Full Data.csv")
+OUT_DATA = str(_SHARED / "data" / "openbb_enriched_stock_data_2024_onward.csv")
+OUT_REPORT = str(_SHARED / "data" / "OPENBB_DATA_EXPANSION_REPORT.md")
 START_DATE = "2024-01-01"
 
 

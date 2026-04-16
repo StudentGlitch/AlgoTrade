@@ -17,6 +17,7 @@ import time
 import argparse
 from dataclasses import dataclass
 from collections import deque
+from pathlib import Path
 from typing import Optional, Dict, List, Tuple
 
 import pandas as pd
@@ -25,6 +26,13 @@ import requests
 
 from notifications import WebhookNotifier
 from preflight_warmup import PreflightConfig, PreflightWarmup
+
+_SHARED = Path(__file__).resolve().parent.parent.parent / "shared"
+_DEFAULT_DATA_PATH = str(_SHARED / "data" / "phase7_trading_input_example.csv")
+_DEFAULT_MASTER_DATA = str(_SHARED / "data" / "phase6_lpa_enriched.csv")
+_DEFAULT_PROD_DIR = str(_SHARED / "models")
+_DEFAULT_LOG = str(_SHARED / "logs" / "phase1_train_log.jsonl")
+_DEFAULT_REPORT = str(_SHARED / "logs" / "PREFLIGHT_WARMUP_REPORT.md")
 
 
 # ---------------------------
@@ -669,13 +677,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--mode", choices=["backtest", "live"], default="backtest")
     p.add_argument("--broker", choices=["ib"], default="ib", help="Live broker store backend")
     p.add_argument("--paper", action="store_true", help="Use paper trading environment")
-    p.add_argument("--data-path", default=r"C:\Tugas Akhir\research\phase7_trading_input_example.csv")
+    p.add_argument("--data-path", default=_DEFAULT_DATA_PATH)
     p.add_argument("--symbol", default=os.getenv("LIVE_SYMBOL", "BBRI-STK-SMART-USD"))
     p.add_argument("--run-preflight", action="store_true", help="Run synchronous pre-flight warm-up before live connect")
-    p.add_argument("--preflight-master-data", default=os.getenv("PREFLIGHT_MASTER_DATA", r"C:\Tugas Akhir\research\phase6_lpa_enriched.csv"))
-    p.add_argument("--preflight-prod-dir", default=os.getenv("PREFLIGHT_PROD_DIR", r"C:\Tugas Akhir\production\models"))
-    p.add_argument("--preflight-log-path", default=os.getenv("PREFLIGHT_LOG_PATH", r"C:\Tugas Akhir\production\phase1_train_log.jsonl"))
-    p.add_argument("--preflight-report", default=os.getenv("PREFLIGHT_REPORT_PATH", r"C:\Tugas Akhir\PREFLIGHT_WARMUP_REPORT.md"))
+    p.add_argument("--preflight-master-data", default=os.getenv("PREFLIGHT_MASTER_DATA", _DEFAULT_MASTER_DATA))
+    p.add_argument("--preflight-prod-dir", default=os.getenv("PREFLIGHT_PROD_DIR", _DEFAULT_PROD_DIR))
+    p.add_argument("--preflight-log-path", default=os.getenv("PREFLIGHT_LOG_PATH", _DEFAULT_LOG))
+    p.add_argument("--preflight-report", default=os.getenv("PREFLIGHT_REPORT_PATH", _DEFAULT_REPORT))
     p.add_argument("--preflight-lookback-days", type=int, default=int(os.getenv("PREFLIGHT_LOOKBACK_DAYS", "90")))
     p.add_argument("--preflight-warmup-epochs", type=int, default=int(os.getenv("PREFLIGHT_WARMUP_EPOCHS", "6")))
     return p.parse_args()

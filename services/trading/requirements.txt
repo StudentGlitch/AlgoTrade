@@ -1,0 +1,17 @@
+# Trading service — execution engine, live broker integration, pre-flight warm-up
+# Note: pre-flight warm-up (preflight_warmup.py → train_pipeline.py) requires
+# the same ML stack as the mlops service.
+numpy
+pandas
+backtrader
+ib_insync
+requests
+python-dotenv
+yfinance
+scikit-learn
+tensorflow
+torch
+transformers
+joblib
+schedule
+ta-lib

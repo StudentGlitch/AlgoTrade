@@ -1,12 +1,14 @@
 import os
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
 
-DATA_PATH = r"C:\Tugas Akhir\research\phase4_preprocessed.csv"
-OUT_MD = r"C:\Tugas Akhir\EVENT_STUDY_RESULTS.md"
-OUT_PLOT = r"C:\Tugas Akhir\research\event_study_cav_plot.png"
+_SHARED = Path(__file__).resolve().parent.parent.parent / "shared"
+DATA_PATH = str(_SHARED / "data" / "phase4_preprocessed.csv")
+OUT_MD = str(_SHARED / "data" / "EVENT_STUDY_RESULTS.md")
+OUT_PLOT = str(_SHARED / "data" / "event_study_cav_plot.png")
 
 
 def main() -> None:

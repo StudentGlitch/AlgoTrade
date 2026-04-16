@@ -1,0 +1,19 @@
+# MLOps service — model training, data collection, FinBERT scoring
+numpy
+pandas
+scikit-learn
+tensorflow
+torch
+transformers
+yfinance
+schedule
+requests
+joblib
+python-dotenv
+ta-lib
+openbb
+vaderSentiment
+statsmodels
+linearmodels
+xgboost
+matplotlib

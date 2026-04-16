@@ -1,5 +1,6 @@
 import os
 import warnings
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import yfinance as yf
@@ -8,9 +9,10 @@ from sklearn.impute import IterativeImputer
 from sklearn.linear_model import BayesianRidge
 
 
-IN_PATH = r"C:\Tugas Akhir\research\openbb_enriched_stock_data_2024_onward.csv"
-OUT_PATH = r"C:\Tugas Akhir\research\phase5_rectangularized_data.csv"
-OUT_AUDIT = r"C:\Tugas Akhir\RECTANGULARIZATION_AUDIT.md"
+_SHARED = Path(__file__).resolve().parent.parent.parent / "shared"
+IN_PATH = str(_SHARED / "data" / "openbb_enriched_stock_data_2024_onward.csv")
+OUT_PATH = str(_SHARED / "data" / "phase5_rectangularized_data.csv")
+OUT_AUDIT = str(_SHARED / "data" / "RECTANGULARIZATION_AUDIT.md")
 
 
 def pct_missing(df: pd.DataFrame) -> pd.Series:

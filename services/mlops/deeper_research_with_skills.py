@@ -1,5 +1,6 @@
 import os
 import warnings
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import statsmodels.api as sm
@@ -13,9 +14,10 @@ from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import mean_squared_error
 
 
-DATA_PATH = r"C:\Tugas Akhir\Full Data.csv"
-OUT_MD = r"C:\Tugas Akhir\DEEP_RESEARCH_REPORT.md"
-OUT_CSV = r"C:\Tugas Akhir\research\company_level_effects.csv"
+_SHARED = Path(__file__).resolve().parent.parent.parent / "shared"
+DATA_PATH = str(_SHARED / "data" / "Full Data.csv")
+OUT_MD = str(_SHARED / "data" / "DEEP_RESEARCH_REPORT.md")
+OUT_CSV = str(_SHARED / "data" / "company_level_effects.csv")
 
 
 def to_num(df: pd.DataFrame, cols: list[str]) -> None:
