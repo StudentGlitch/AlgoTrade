@@ -59,6 +59,15 @@ except Exception:  # pragma: no cover
     WebSocketMarketFeed = None
 
 try:
+    from phase2_idx_tobit_lstm import (
+        IDXCensoredVolatilityRefitter,
+        IDXCensoredVolatilityConfig,
+    )
+except Exception:  # pragma: no cover - optional runtime dependency
+    IDXCensoredVolatilityRefitter = None
+    IDXCensoredVolatilityConfig = None
+
+try:
     import torch
     from transformers import AutoModelForSequenceClassification, AutoTokenizer
 except Exception:  # transformers are optional at runtime
@@ -124,6 +133,11 @@ class PipelineConfig:
     finbert_model_name: str = "ProsusAI/finbert"
     idx_sentiment_model_name: str = "indobenchmark/indobert-base-p1"
     enable_idx_localized_sentiment: bool = True
+    # Phase 2: IDX Tobit LSTM
+    enable_idx_tobit_lstm: bool = True
+    idx_tobit_lstm_epochs: int = 20
+    idx_ara_limit: float = 0.25
+    idx_arb_limit: float = -0.10
     # Phase 2: Global Panel LSTM
     panel_lstm_epochs: int = 30
     panel_lstm_batch_size: int = 512
@@ -614,6 +628,29 @@ class ContinuousTrainingPipeline:
         lstm_stats = lstm.fit(train_df, train_cutoff=train_cut)
         lstm_path, scaler_path = lstm.save(self.cfg.prod_dir)
 
+        # Phase 2 (IDX): Censored Volatility LSTM with Tobit ARA/ARB loss
+        if self.cfg.enable_idx_tobit_lstm and IDXCensoredVolatilityRefitter is not None:
+            try:
+                idx_lstm_cfg = IDXCensoredVolatilityConfig(
+                    lookback=self.cfg.lstm_lookback,
+                    epochs=self.cfg.idx_tobit_lstm_epochs,
+                    ara_limit=self.cfg.idx_ara_limit,
+                    arb_limit=self.cfg.idx_arb_limit,
+                    prod_dir=self.cfg.prod_dir,
+                )
+                idx_tobit = IDXCensoredVolatilityRefitter(idx_lstm_cfg)
+                idx_tobit_stats = idx_tobit.fit(train_df, train_cutoff=train_cut)
+                idx_tobit_artifacts = idx_tobit.save(self.cfg.prod_dir)
+                # Enrich train_df with latent volatility predictions for E2E optimizer
+                train_df = idx_tobit.predict(train_df)
+            except Exception as exc:
+                self.logger.write("idx_tobit_lstm_warning", {"error": str(exc)})
+                idx_tobit_stats = {"skipped": str(exc)}
+                idx_tobit_artifacts = {}
+        else:
+            idx_tobit_stats = {"skipped": "disabled or unavailable"}
+            idx_tobit_artifacts = {}
+
         # Persist refreshed profile ids in master data
         keep_base = df.drop(
             columns=[
@@ -664,6 +701,8 @@ class ContinuousTrainingPipeline:
             "lstm_scaler_path": scaler_path,
             "lpa_stats": lpa_stats,
             "lstm_stats": lstm_stats,
+            "idx_tobit_lstm_stats": idx_tobit_stats,
+            "idx_tobit_lstm_artifacts": idx_tobit_artifacts,
         }
 
         # Phase 2: Global Panel LSTM with entity embeddings

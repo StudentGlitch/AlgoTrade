@@ -1,11 +1,22 @@
 """
-Phase 3: End-to-End Markowitz Allocation & HRP Fallback
--------------------------------------------------------
+Phase 3: End-to-End Markowitz Allocation & HRP Fallback + IDX Constraints
+--------------------------------------------------------------------------
 E2EPortfolioOptimizer:
   - Neural network with softmax output producing optimal weights w_t
   - Custom Sharpe maximization loss with transaction cost and
     concentration penalties baked into the learning process
   - Long-only constraint enforced by softmax activation
+
+IDXConstrainedE2ELoss (extends _SharpeWithCostLoss):
+  - Maximum Participation (ADV) penalty: differentiable soft penalty that
+    heavily penalises allocations exceeding 5 % of the 20-day ADV.
+    The penalty is proportional to the capital-weighted excess:
+      adv_penalty = lambda_adv * mean( relu(w * pv - adv_cap * adv_20d) )
+    where adv_cap defaults to 0.05 (5 %).  The penalty is differentiable
+    because relu is a supergradient of max(0, x).
+  - L1 Turnover penalty: gamma/2 * sum(|w_t - w_{t-1}|) to explicitly
+    penalise high rebalancing in illiquid IDX third-liner names where
+    broker fees and slippage are prohibitive.
 
 HRPAllocator:
   - Hierarchical Risk Parity fallback using SciPy clustering
@@ -86,6 +97,113 @@ class _SharpeWithCostLoss:
 
 
 # ---------------------------------------------------------------------------
+# IDX Constraints: ADV participation cap + L1 turnover penalty
+# ---------------------------------------------------------------------------
+
+class IDXConstrainedE2ELoss(_SharpeWithCostLoss):
+    """
+    Extends _SharpeWithCostLoss with IDX-specific constraints:
+
+    1. Maximum Participation (ADV) soft penalty
+       ─────────────────────────────────────────
+       Prevents the network from placing orders that would exceed
+       ``adv_cap`` (default 5 %) of each asset's 20-day ADV.
+
+       penalty_adv = lambda_adv * mean_over_assets( relu(w_i - cap_i) )
+
+       where cap_i = adv_cap * adv_i / total_portfolio_value.
+
+       cap_vector is a TensorFlow constant of shape (n_assets,) computed
+       from the asset ADV vector passed at construction time.
+
+       The relu operator is a supergradient of max(0, x), making the
+       penalty fully differentiable for backpropagation.
+
+    2. L1 Turnover penalty
+       ─────────────────────
+       penalty_turn = (gamma / 2) * mean( |w_t - w_{t-1}| )
+
+       w_prev is the rolling previous-step weight passed through
+       y_true[:,n_assets:] (the loss packs prev_weights into the second
+       half of y_true to remain Keras-compatible).
+    """
+
+    def __init__(
+        self,
+        lambda_tc: float = 0.005,
+        lambda_conc: float = 1.0,
+        max_weight: float = 0.10,
+        lambda_adv: float = 10.0,
+        adv_cap: float = 0.05,
+        gamma_turnover: float = 0.5,
+        adv_vector: Optional[np.ndarray] = None,
+        n_assets: int = 0,
+    ):
+        super().__init__(lambda_tc=lambda_tc, lambda_conc=lambda_conc, max_weight=max_weight)
+        self.lambda_adv = float(lambda_adv)
+        self.adv_cap = float(adv_cap)
+        self.gamma_turnover = float(gamma_turnover)
+        self._adv_vector = adv_vector  # shape (n_assets,) — 20-day ADV normalised
+        self._n_assets = int(n_assets)
+
+    def _build_adv_cap_tensor(self, n_a: int):
+        """Return per-asset ADV cap as a float32 tensor of shape (1, n_a)."""
+        if tf is None:
+            return None
+        if self._adv_vector is not None and len(self._adv_vector) == n_a:
+            adv_norm = np.clip(self._adv_vector.astype(np.float32), 1e-8, None)
+            cap = self.adv_cap * (adv_norm / adv_norm.sum())
+        else:
+            # Fallback: uniform cap = adv_cap / n_assets
+            cap = np.full(n_a, self.adv_cap / max(n_a, 1), dtype=np.float32)
+        return tf.constant(cap.reshape(1, n_a), dtype=tf.float32)
+
+    def __call__(self, y_true, y_pred):
+        """
+        Args:
+            y_true: (batch, 2 * n_assets)
+                    y_true[:, :n_assets]  = forward returns
+                    y_true[:, n_assets:]  = previous portfolio weights
+            y_pred: (batch, n_assets) — softmax portfolio weights
+        """
+        if tf is None:
+            raise RuntimeError("TensorFlow required.")
+
+        n_a = tf.shape(y_pred)[1]
+        n_a_int = y_pred.shape[1] or self._n_assets
+
+        # Split returns and previous weights from y_true
+        fwd_returns = y_true[:, :n_a]
+        prev_weights = y_true[:, n_a:]
+
+        # Base Sharpe + TC + concentration loss (operating on forward returns)
+        base_loss = super().__call__(fwd_returns, y_pred)
+
+        # --- ADV participation penalty ---
+        adv_cap_t = self._build_adv_cap_tensor(n_a_int)
+        if adv_cap_t is not None:
+            excess = tf.nn.relu(y_pred - adv_cap_t)
+            adv_penalty = self.lambda_adv * tf.reduce_mean(
+                tf.reduce_sum(excess, axis=1)
+            )
+        else:
+            adv_penalty = tf.constant(0.0)
+
+        # --- L1 Turnover penalty ---
+        # Only apply when prev_weights has the expected shape
+        prev_w_shape = prev_weights.shape[1] if prev_weights.shape.rank > 1 else 0
+        if prev_w_shape and prev_w_shape == n_a_int:
+            l1_turn = tf.reduce_mean(
+                tf.reduce_sum(tf.abs(y_pred - prev_weights), axis=1)
+            )
+            turnover_penalty = (self.gamma_turnover / 2.0) * l1_turn
+        else:
+            turnover_penalty = tf.constant(0.0)
+
+        return base_loss + adv_penalty + turnover_penalty
+
+
+# ---------------------------------------------------------------------------
 # E2E Portfolio Optimizer
 # ---------------------------------------------------------------------------
 @dataclass
@@ -100,6 +218,11 @@ class E2EConfig:
     batch_size: int = 128
     early_stopping_patience: int = 8
     prod_dir: str = str(_SHARED / "models")
+    # IDX-specific constraint parameters
+    use_idx_constraints: bool = True
+    lambda_adv: float = 10.0
+    adv_cap: float = 0.05
+    gamma_turnover: float = 0.5
 
 
 class E2EPortfolioOptimizer:
@@ -107,15 +230,19 @@ class E2EPortfolioOptimizer:
     Directly learns portfolio weights w_t via an MLP with softmax output.
 
     Inputs per sample:
-      - Predicted volatilities for all N assets (from GlobalPanelLSTM)
+      - Predicted volatilities for all N assets (from GlobalPanelLSTM / Tobit LSTM)
       - Recent mean returns for all N assets
     Output:
       - w_t: N-dimensional portfolio weight vector (softmax → long-only, sums to 1)
 
-    Training data structure:
-      X[t] = [pred_vol_1..N, mean_ret_1..N]  (2N features)
-      y[t] = forward_returns_1..N             (N targets)
-    Loss = -Sharpe(w_t · r_{t+1}) + TC_penalty + Concentration_penalty
+    Training data structure (standard / non-IDX):
+      X[t] = [pred_vol_1..N, mean_ret_1..N]          (2N features)
+      y[t] = forward_returns_1..N                     (N targets)
+      Loss = -Sharpe(w_t · r_{t+1}) + TC_penalty + Concentration_penalty
+
+    When use_idx_constraints=True (default):
+      y[t] = concat(forward_returns, prev_weights)    (2N targets)
+      Loss += ADV_participation_penalty + L1_turnover_penalty
     """
 
     def __init__(self, cfg: Optional[E2EConfig] = None):
@@ -123,6 +250,7 @@ class E2EPortfolioOptimizer:
         self.model: Optional[object] = None
         self.n_assets: int = 0
         self.asset_names: list[str] = []
+        self._adv_vector: Optional[np.ndarray] = None
 
     def _build_model(self, n_input: int, n_assets: int) -> object:
         if tf is None or Model is None:
@@ -135,11 +263,23 @@ class E2EPortfolioOptimizer:
         # Softmax enforces long-only (all non-negative) and sum-to-one
         weights = Dense(n_assets, activation="softmax", name="portfolio_weights")(x)
         m = Model(inputs=inp, outputs=weights)
-        loss_fn = _SharpeWithCostLoss(
-            lambda_tc=self.cfg.lambda_tc,
-            lambda_conc=self.cfg.lambda_conc,
-            max_weight=self.cfg.max_weight,
-        )
+        if self.cfg.use_idx_constraints:
+            loss_fn = IDXConstrainedE2ELoss(
+                lambda_tc=self.cfg.lambda_tc,
+                lambda_conc=self.cfg.lambda_conc,
+                max_weight=self.cfg.max_weight,
+                lambda_adv=self.cfg.lambda_adv,
+                adv_cap=self.cfg.adv_cap,
+                gamma_turnover=self.cfg.gamma_turnover,
+                adv_vector=self._adv_vector,
+                n_assets=n_assets,
+            )
+        else:
+            loss_fn = _SharpeWithCostLoss(
+                lambda_tc=self.cfg.lambda_tc,
+                lambda_conc=self.cfg.lambda_conc,
+                max_weight=self.cfg.max_weight,
+            )
         m.compile(
             optimizer=tf.keras.optimizers.Adam(learning_rate=self.cfg.learning_rate),
             loss=loss_fn,
@@ -151,9 +291,14 @@ class E2EPortfolioOptimizer:
         Build training samples from a panel DataFrame.
 
         Each time-step t produces:
-          X[t] = predicted vols (from pred_volatility or volatility_20d) +
+          X[t] = predicted vols (from idx_pred_volatility / volatility_20d) +
                  rolling mean returns across N assets
           y[t] = forward abs_return for all N assets at t+1
+
+          When IDX constraints are enabled (use_idx_constraints=True):
+            y[t] = concat(forward_returns, prev_weights_t)   shape (2N,)
+          This allows IDXConstrainedE2ELoss to compute the L1 turnover penalty
+          without requiring an extra input layer.
         """
         if tf is None:
             raise RuntimeError("TensorFlow required.")
@@ -166,9 +311,11 @@ class E2EPortfolioOptimizer:
         self.asset_names = assets
         self.n_assets = len(assets)
 
-        vol_col = "pred_volatility" if "pred_volatility" in df.columns else "volatility_20d"
-        if vol_col not in df.columns:
-            vol_col = "abs_return"
+        # Prefer IDX Tobit LSTM predictions when available
+        vol_col = next(
+            (c for c in ["idx_pred_volatility", "pred_volatility", "volatility_20d"] if c in df.columns),
+            "abs_return",
+        )
 
         # Pivot to (date × asset) matrices — uses only training window
         train_df = df[df["date"] <= train_cutoff]
@@ -184,24 +331,45 @@ class E2EPortfolioOptimizer:
                 f"Insufficient time-steps ({len(pivot_vol)}) for E2EPortfolioOptimizer."
             )
 
+        # Build 20-day ADV vector for IDX ADV participation constraint
+        if "volume" in df.columns:
+            adv_pivot = train_df.pivot_table(
+                index="date", columns="company", values="volume", aggfunc="mean"
+            ).reindex(columns=assets).ffill().fillna(0.0)
+            self._adv_vector = adv_pivot.rolling(20, min_periods=1).mean().iloc[-1].values.astype(np.float32)
+        else:
+            self._adv_vector = None
+
         # Build X = [vol_t, mean_ret_rolling_5], y = ret_{t+1}
         rolling_mean_ret = pivot_ret.rolling(5, min_periods=1).mean()
-        X_vol = pivot_vol.values.astype(np.float32)
-        X_ret = rolling_mean_ret.values.astype(np.float32)
-        X = np.concatenate([X_vol, X_ret], axis=1)[:-1]  # drop last (no forward y)
-        y = pivot_ret.values.astype(np.float32)[1:]       # forward returns
+        x_vol = pivot_vol.values.astype(np.float32)
+        x_ret = rolling_mean_ret.values.astype(np.float32)
+        x_all = np.concatenate([x_vol, x_ret], axis=1)[:-1]  # drop last (no forward y)
+        fwd_ret = pivot_ret.values.astype(np.float32)[1:]     # forward returns
 
-        split = int(len(X) * 0.85)
-        X_train, X_val = X[:split], X[split:]
-        y_train, y_val = y[:split], y[split:]
+        if self.cfg.use_idx_constraints:
+            # Append previous (equal-weight) weights to y so the loss can
+            # compute L1 turnover.  At t=0 prev_weights = 1/N.
+            n_a = self.n_assets
+            eq_w = np.full(n_a, 1.0 / n_a, dtype=np.float32)
+            prev_w = np.vstack(
+                [eq_w.reshape(1, -1)] + [eq_w.reshape(1, -1)] * (len(fwd_ret) - 1)
+            )
+            y_all = np.concatenate([fwd_ret, prev_w], axis=1)
+        else:
+            y_all = fwd_ret
 
-        self.model = self._build_model(n_input=X.shape[1], n_assets=self.n_assets)
+        split = int(len(x_all) * 0.85)
+        x_train, x_val = x_all[:split], x_all[split:]
+        y_train, y_val = y_all[:split], y_all[split:]
+
+        self.model = self._build_model(n_input=x_all.shape[1], n_assets=self.n_assets)
         es = tf.keras.callbacks.EarlyStopping(
             monitor="val_loss", patience=self.cfg.early_stopping_patience, restore_best_weights=True
         )
         hist = self.model.fit(
-            X_train, y_train,
-            validation_data=(X_val, y_val),
+            x_train, y_train,
+            validation_data=(x_val, y_val),
             epochs=self.cfg.epochs,
             batch_size=self.cfg.batch_size,
             shuffle=False,
@@ -210,9 +378,11 @@ class E2EPortfolioOptimizer:
         )
         return {
             "n_assets": self.n_assets,
-            "n_time_steps": len(X),
+            "n_time_steps": len(x_all),
             "epochs_run": int(len(hist.history["loss"])),
             "final_val_loss": float(hist.history.get("val_loss", [float("nan")])[-1]),
+            "idx_constraints_enabled": bool(self.cfg.use_idx_constraints),
+            "vol_col_used": vol_col,
         }
 
     def predict_weights(self, vol_vector: np.ndarray, ret_vector: np.ndarray) -> np.ndarray:

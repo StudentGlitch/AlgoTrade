@@ -9,6 +9,8 @@ Event-driven Backtrader engine with:
 5) Live broker integration hooks with paper-trading flag
 6) Portfolio weight service (E2E Markowitz / HRP weights from Phase 3)
 7) Real-time WebSocket market feed (Phase 4)
+8) IDX ARB-avoidance execution override (Phase 4 IDX)
+9) IDX broker API integration hooks (Phase 5)
 """
 
 from __future__ import annotations
@@ -29,6 +31,28 @@ import requests
 
 from notifications import WebhookNotifier
 from preflight_warmup import PreflightConfig, PreflightWarmup
+
+try:
+    from phase4_idx_arb_execution import (
+        IDXAlmgrenChrissPlanner,
+        ARBProbabilityMonitor,
+        ARBMonitorConfig,
+    )
+except Exception:  # pragma: no cover - optional runtime dependency
+    IDXAlmgrenChrissPlanner = None
+    ARBProbabilityMonitor = None
+    ARBMonitorConfig = None
+
+try:
+    from phase5_idx_broker_api import (
+        IDXDataFeedWebSocket,
+        IDXDataFeedConfig,
+        IDXOrderBookLevel2,
+    )
+except Exception:  # pragma: no cover - optional runtime dependency
+    IDXDataFeedWebSocket = None
+    IDXDataFeedConfig = None
+    IDXOrderBookLevel2 = None
 
 _SHARED = Path(__file__).resolve().parent.parent.parent / "shared"
 _DEFAULT_DATA_PATH = str(_SHARED / "data" / "phase7_trading_input_example.csv")
@@ -399,6 +423,8 @@ class RegimeExecutionStrategy(bt.Strategy):
         feature_service=None,
         live_symbol="",
         portfolio_weight_service=None,
+        idx_data_feed=None,
+        arb_monitor_cfg=None,
     )
 
     def __init__(self):
@@ -408,7 +434,19 @@ class RegimeExecutionStrategy(bt.Strategy):
             default_b=self.p.kelly_b,
             default_p=self.p.kelly_p,
         )
-        self.ac = AlmgrenChrissPlanner(n_slices=self.p.ac_slices, kappa=self.p.ac_kappa)
+        # Phase 4 IDX: use ARB-aware planner when available, fall back to standard
+        if IDXAlmgrenChrissPlanner is not None:
+            mon_cfg = self.p.arb_monitor_cfg or ARBMonitorConfig()
+            self.ac = IDXAlmgrenChrissPlanner(
+                n_slices=self.p.ac_slices,
+                kappa=self.p.ac_kappa,
+                monitor_cfg=mon_cfg,
+            )
+        else:
+            self.ac = AlmgrenChrissPlanner(n_slices=self.p.ac_slices, kappa=self.p.ac_kappa)
+
+        # Phase 5 IDX: LOB data feed
+        self.idx_feed: Optional[object] = self.p.idx_data_feed
 
         self.pending_child_orders = deque()
         self.parent_ctx: Optional[ParentOrderContext] = None
@@ -471,6 +509,8 @@ class RegimeExecutionStrategy(bt.Strategy):
         kelly_fraction: float,
         target_abs_size: int,
         regime_action: str,
+        pred_volatility: float = 0.02,
+        bars_elapsed: int = 0,
     ):
         if parent_delta == 0:
             return
@@ -480,7 +520,16 @@ class RegimeExecutionStrategy(bt.Strategy):
             stop_distance=stop_dist,
         )
         if use_slicing:
-            chunks = self.ac.slice_delta(parent_delta)
+            # Phase 4 IDX: use ARB-aware slice when the planner supports it
+            if IDXAlmgrenChrissPlanner is not None and isinstance(self.ac, IDXAlmgrenChrissPlanner):
+                chunks = self.ac.slice_delta_arb_aware(
+                    parent_delta,
+                    current_price=decision_price,
+                    pred_daily_volatility=pred_volatility,
+                    bars_elapsed=bars_elapsed,
+                )
+            else:
+                chunks = self.ac.slice_delta(parent_delta)
             for q in chunks:
                 self.pending_child_orders.append(q)
         else:
@@ -537,6 +586,13 @@ class RegimeExecutionStrategy(bt.Strategy):
 
         close_px = float(self.data.close[0])
         pv = float(self.broker.getvalue())
+
+        # Phase 5 IDX: pull LOB imbalance from the live IDX data feed when available
+        lob_imbalance = 0.0
+        if self.idx_feed is not None and IDXDataFeedWebSocket is not None:
+            live_sym = self.live_symbol or ""
+            if live_sym:
+                lob_imbalance = float(self.idx_feed.get_lob_imbalance(live_sym))
 
         regime = self.state_machine.resolve(profile_id, pom_pom_active=pom_pom_active)
         stop_dist = self.risk.stop_distance(regime.k_stop_mult, pred_vol)
@@ -600,6 +656,7 @@ class RegimeExecutionStrategy(bt.Strategy):
                 kelly_fraction=f_star,
                 target_abs_size=target_abs,
                 regime_action=regime.action,
+                pred_volatility=pred_vol,
             )
         elif regime.action in {"AGGRESSIVE_DIRECTIONAL", "PUMP_DUMP_RISK_OFF"}:
             self._execute_parent_delta(
@@ -610,6 +667,7 @@ class RegimeExecutionStrategy(bt.Strategy):
                 kelly_fraction=f_star,
                 target_abs_size=target_abs,
                 regime_action=regime.action,
+                pred_volatility=pred_vol,
             )
         else:  # PASSIVE_LIQUIDITY
             # Passive mode: only move part of the required delta each step
@@ -624,6 +682,7 @@ class RegimeExecutionStrategy(bt.Strategy):
                 kelly_fraction=f_star,
                 target_abs_size=target_abs,
                 regime_action=regime.action,
+                pred_volatility=pred_vol,
             )
 
         self._send_alert(
@@ -638,6 +697,7 @@ class RegimeExecutionStrategy(bt.Strategy):
                 "pred_volatility": pred_vol,
                 "stop_distance": stop_dist,
                 "is_pom_pom_regime": int(pom_pom_active),
+                "lob_imbalance": float(lob_imbalance),
             },
         )
         self._dispatch_next_child()
