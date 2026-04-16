@@ -15,3 +15,5 @@ transformers
 joblib
 schedule
 ta-lib
+scipy
+websocket-client

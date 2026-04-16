@@ -7,6 +7,8 @@ Event-driven Backtrader engine with:
 3) Vol-targeted stop loss + fractional Kelly sizing
 4) Almgren-Chriss style child-order slicing and shortfall tracking
 5) Live broker integration hooks with paper-trading flag
+6) Portfolio weight service (E2E Markowitz / HRP weights from Phase 3)
+7) Real-time WebSocket market feed (Phase 4)
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from collections import deque
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple
 
+import joblib
 import pandas as pd
 import backtrader as bt
 import requests
@@ -33,6 +36,80 @@ _DEFAULT_MASTER_DATA = str(_SHARED / "data" / "phase6_lpa_enriched.csv")
 _DEFAULT_PROD_DIR = str(_SHARED / "models")
 _DEFAULT_LOG = str(_SHARED / "logs" / "phase1_train_log.jsonl")
 _DEFAULT_REPORT = str(_SHARED / "logs" / "PREFLIGHT_WARMUP_REPORT.md")
+
+
+# ---------------------------
+# Phase 3: Portfolio weight service
+# ---------------------------
+class PortfolioWeightService:
+    """
+    Loads E2E Markowitz or HRP portfolio weights from the shared model store.
+    Used by the execution strategy to apply cross-asset optimal sizing.
+
+    Priority resolution at runtime:
+      1. E2E optimizer weights (e2e_portfolio_meta.pkl)
+      2. HRP weights fallback (hrp_weights.pkl)
+      3. Equal-weight distribution if no saved weights exist
+    """
+
+    def __init__(self, prod_dir: Optional[str] = None):
+        self.prod_dir = prod_dir or os.getenv("PROD_DIR", _DEFAULT_PROD_DIR)
+        self._weights: Optional[Dict[str, float]] = None
+        self._asset_names: Optional[List[str]] = None
+        self._source: str = "not_loaded"
+
+    def load(self) -> bool:
+        """Load weights. Returns True if successfully loaded from disk."""
+        # Try E2E meta first (asset_names list)
+        meta_path = os.path.join(self.prod_dir, "e2e_portfolio_meta.pkl")
+        hrp_path = os.path.join(self.prod_dir, "hrp_weights.pkl")
+        try:
+            if os.path.exists(meta_path):
+                meta = joblib.load(meta_path)
+                self._asset_names = meta.get("asset_names", [])
+                n = len(self._asset_names)
+                if n > 0:
+                    self._weights = {a: 1.0 / n for a in self._asset_names}
+                    self._source = "e2e_equal_fallback"
+            if os.path.exists(hrp_path):
+                saved = joblib.load(hrp_path)
+                hrp_w = saved.get("weights")
+                if hrp_w is not None and hasattr(hrp_w, "to_dict"):
+                    self._weights = hrp_w.to_dict()
+                    self._source = "hrp"
+                    return True
+        except Exception:
+            pass
+        return self._weights is not None
+
+    def get_weight(self, symbol: str, default: float = 0.0) -> float:
+        """Return portfolio weight for a symbol (e.g. 'BBRI')."""
+        if self._weights is None:
+            self.load()
+        if self._weights is None:
+            return default
+        company = symbol.replace(".JK", "")
+        return float(self._weights.get(company, self._weights.get(symbol, default)))
+
+    def get_max_position_fraction(self, symbol: str, max_cap: float = 0.25) -> float:
+        """Convert portfolio weight to a max_pos_size cap for RiskManager."""
+        w = self.get_weight(symbol)
+        # Clamp to [0.01, max_cap] to avoid very small or very large positions
+        return max(0.01, min(w if w > 0 else max_cap, max_cap))
+
+    @property
+    def source(self) -> str:
+        return self._source
+
+
+# ---------------------------
+# Phase 4: Real-time WebSocket market feed (thin wrapper)
+# ---------------------------
+try:
+    from phase4_distributed_pipeline import WebSocketMarketFeed, WebSocketConfig
+except ImportError:  # pragma: no cover
+    WebSocketMarketFeed = None  # type: ignore[assignment]
+    WebSocketConfig = None  # type: ignore[assignment]
 
 
 # ---------------------------
@@ -306,6 +383,7 @@ class RegimeExecutionStrategy(bt.Strategy):
         notifier=None,
         feature_service=None,
         live_symbol="",
+        portfolio_weight_service=None,
     )
 
     def __init__(self):
@@ -326,6 +404,7 @@ class RegimeExecutionStrategy(bt.Strategy):
         self.shortfall_records: List[Tuple[pd.Timestamp, float]] = []
         self.notifier: Optional[WebhookNotifier] = self.p.notifier
         self.feature_service: Optional[LiveFeatureService] = self.p.feature_service
+        self.portfolio_weight_svc: Optional[PortfolioWeightService] = self.p.portfolio_weight_service
         self.live_symbol = self.p.live_symbol
         self.last_profile_id: Optional[int] = None
 
@@ -454,12 +533,22 @@ class RegimeExecutionStrategy(bt.Strategy):
 
         direction = self._signal_direction(finbert)
         f_star = self.risk.kelly_fraction(p=self.p.kelly_p, b=self.p.kelly_b)
+
+        # Phase 3: use portfolio weight service to constrain max position size
+        # when E2E Markowitz or HRP weights are available.
+        effective_max_pos = regime.max_pos_size
+        if self.portfolio_weight_svc is not None:
+            sym = self.live_symbol or ""
+            effective_max_pos = self.portfolio_weight_svc.get_max_position_fraction(
+                sym, max_cap=regime.max_pos_size
+            )
+
         target_abs = self.risk.target_size(
             portfolio_value=pv,
             price=close_px,
             pred_volatility=pred_vol,
             c_scale=regime.c_scale,
-            max_pos_size=regime.max_pos_size,
+            max_pos_size=effective_max_pos,
             kelly_p=self.p.kelly_p,
             kelly_b=self.p.kelly_b,
         )

@@ -18,3 +18,7 @@ linearmodels
 xgboost
 matplotlib
 influxdb-client
+scipy
+# Phase 4: Ray distributed computing (>=2.52.0 for DNS rebinding security fix)
+# Use only ray.remote tasks; do NOT expose the Ray dashboard publicly.
+ray[default]>=2.52.0
