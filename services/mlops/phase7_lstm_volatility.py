@@ -1,5 +1,6 @@
 import os
 import random
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import tensorflow as tf
@@ -11,9 +12,10 @@ from tensorflow.keras.layers import Input, LSTM, Dropout, Dense
 from tensorflow.keras.callbacks import EarlyStopping
 
 
-IN_PATH = r"C:\Tugas Akhir\research\phase6_lpa_enriched.csv"
-OUT_MD = r"C:\Tugas Akhir\LSTM_FINAL_RESULTS.md"
-OUT_PLOT = r"C:\Tugas Akhir\research\phase7_lstm_actual_vs_pred.png"
+_SHARED = Path(__file__).resolve().parent.parent.parent / "shared"
+IN_PATH = str(_SHARED / "data" / "phase6_lpa_enriched.csv")
+OUT_MD = str(_SHARED / "data" / "LSTM_FINAL_RESULTS.md")
+OUT_PLOT = str(_SHARED / "data" / "phase7_lstm_actual_vs_pred.png")
 
 
 def set_seed(seed: int = 42):

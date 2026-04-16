@@ -1,6 +1,7 @@
 import os
 import warnings
 from datetime import datetime, timezone
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import yfinance as yf
@@ -10,9 +11,10 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.mixture import GaussianMixture
 
 
-IN_PATH = r"C:\Tugas Akhir\research\phase5_rectangularized_data.csv"
-OUT_DATA = r"C:\Tugas Akhir\research\phase6_lpa_enriched.csv"
-OUT_REPORT = r"C:\Tugas Akhir\LPA_PROFILES_REPORT.md"
+_SHARED = Path(__file__).resolve().parent.parent.parent / "shared"
+IN_PATH = str(_SHARED / "data" / "phase5_rectangularized_data.csv")
+OUT_DATA = str(_SHARED / "data" / "phase6_lpa_enriched.csv")
+OUT_REPORT = str(_SHARED / "data" / "LPA_PROFILES_REPORT.md")
 
 
 def load_finbert():

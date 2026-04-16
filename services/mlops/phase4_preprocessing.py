@@ -1,11 +1,13 @@
 import os
+from pathlib import Path
 import numpy as np
 import pandas as pd
 
 
-DATA_PATH = r"C:\Tugas Akhir\Full Data.csv"
-OUT_DATA = r"C:\Tugas Akhir\research\phase4_preprocessed.csv"
-OUT_AUDIT = r"C:\Tugas Akhir\PREPROCESSING_AUDIT.md"
+_SHARED = Path(__file__).resolve().parent.parent.parent / "shared"
+DATA_PATH = str(_SHARED / "data" / "Full Data.csv")
+OUT_DATA = str(_SHARED / "data" / "phase4_preprocessed.csv")
+OUT_AUDIT = str(_SHARED / "data" / "PREPROCESSING_AUDIT.md")
 
 
 def main() -> None:

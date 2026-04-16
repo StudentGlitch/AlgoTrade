@@ -17,6 +17,7 @@ import time
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional
 
 import joblib
@@ -45,9 +46,10 @@ except Exception:  # transformers are optional at runtime
     AutoTokenizer = None
 
 
-DEFAULT_MASTER_DATA = r"C:\Tugas Akhir\research\phase6_lpa_enriched.csv"
-DEFAULT_PROD_DIR = r"C:\Tugas Akhir\production\models"
-DEFAULT_LOG = r"C:\Tugas Akhir\production\phase1_train_log.jsonl"
+_SHARED = Path(__file__).resolve().parent.parent.parent / "shared"
+DEFAULT_MASTER_DATA = str(_SHARED / "data" / "phase6_lpa_enriched.csv")
+DEFAULT_PROD_DIR = str(_SHARED / "models")
+DEFAULT_LOG = str(_SHARED / "logs" / "phase1_train_log.jsonl")
 
 
 def now_utc() -> datetime:

@@ -1,6 +1,10 @@
 """
 Phase 1: Pre-Flight Data Fetch & ML Warm-up
 -------------------------------------------
+NOTE: This file is a required copy for the trading_service container.
+Both services run in separate Docker containers and cannot share Python modules
+directly. This copy exists so trading_engine.py can invoke --run-preflight, which
+uses PreflightWarmup defined here. Authoritative source: services/mlops/preflight_warmup.py
 1) Pull freshest OHLCV + macro data (yfinance) up to current day
 2) Update master dataset in-place
 3) Run synchronous training warm-up (collect + refit)
@@ -14,6 +18,7 @@ import json
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -22,10 +27,11 @@ import yfinance as yf
 from train_pipeline import PipelineConfig, ContinuousTrainingPipeline
 
 
-DEFAULT_MASTER = r"C:\Tugas Akhir\research\phase6_lpa_enriched.csv"
-DEFAULT_PROD_DIR = r"C:\Tugas Akhir\production\models"
-DEFAULT_LOG = r"C:\Tugas Akhir\production\phase1_train_log.jsonl"
-DEFAULT_REPORT = r"C:\Tugas Akhir\PREFLIGHT_WARMUP_REPORT.md"
+_SHARED = Path(__file__).resolve().parent.parent.parent / "shared"
+DEFAULT_MASTER = str(_SHARED / "data" / "phase6_lpa_enriched.csv")
+DEFAULT_PROD_DIR = str(_SHARED / "models")
+DEFAULT_LOG = str(_SHARED / "logs" / "phase1_train_log.jsonl")
+DEFAULT_REPORT = str(_SHARED / "logs" / "PREFLIGHT_WARMUP_REPORT.md")
 
 
 def now_utc() -> datetime:

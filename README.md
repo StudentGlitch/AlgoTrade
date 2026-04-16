@@ -1,17 +1,34 @@
 # Quant Trading ML Ops (Paper Trading Ready)
 
-This repository contains:
-- `research/train_pipeline.py` (daily/weekly retraining scheduler)
-- `research/trading_engine.py` (live/paper execution engine)
-- `research/preflight_warmup.py` (pre-flight data refresh + warm-up training)
-- `research/notifications.py` (Discord/Telegram/webhook alerts)
-- Dockerized deployment with shared model volume (`docker-compose.yml`)
+This repository contains two isolated microservices and a shared volume:
+
+```
+services/
+├── mlops/            ← ContinuousTrainingPipeline, data collectors, FinBERT re-scoring
+│   ├── train_pipeline.py
+│   ├── preflight_warmup.py
+│   ├── notifications.py
+│   ├── phase1_panel_fe.py … phase7_lstm_volatility.py
+│   ├── Dockerfile
+│   └── requirements.txt
+└── trading/          ← RegimeExecutionStrategy, live IB broker hooks
+    ├── trading_engine.py
+    ├── preflight_warmup.py  (copy — needed for --run-preflight)
+    ├── train_pipeline.py    (copy — needed by preflight_warmup)
+    ├── notifications.py     (copy)
+    ├── Dockerfile
+    └── requirements.txt
+shared/               ← Docker-mounted volume shared by both services
+├── models/           ← .pkl and .h5 model artefacts written by mlops, read by trading
+├── data/             ← master dataset CSV and intermediate data files
+└── logs/             ← JSONL training logs, PREFLIGHT_WARMUP_REPORT.md
+```
 
 ## 1) Setup
 
 1. Copy `.env.example` to `.env`
 2. Fill broker + webhook credentials in `.env`
-3. (Optional) place starter models in `production/models/`
+3. (Optional) place seed CSVs in `shared/data/` and starter models in `shared/models/`
 
 ## 2) Run on VPS (Docker)
 
@@ -24,13 +41,16 @@ docker compose logs -f mlops_service
 ## 3) Run locally (Python)
 
 ```bash
-pip install -r requirements.txt
-python research/train_pipeline.py --mode scheduler
-python research/trading_engine.py --mode live --paper --broker ib --run-preflight
+pip install -r services/mlops/requirements.txt
+python services/mlops/train_pipeline.py --mode scheduler
+
+pip install -r services/trading/requirements.txt
+python services/trading/trading_engine.py --mode live --paper --broker ib --run-preflight
 ```
 
 ## 4) Notes
 
 - `--paper` keeps execution in paper-trading mode.
 - Pre-flight (`--run-preflight`) blocks live startup until model refresh succeeds.
-- Model sharing is done via `./production/models:/app/models`.
+- Model sharing is done via `./shared/models:/app/shared/models` (Docker volume).
+- Data sharing is done via `./shared/data:/app/shared/data` (Docker volume).
