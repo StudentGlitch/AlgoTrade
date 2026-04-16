@@ -72,14 +72,15 @@ class DatabaseConnector:
         work[time_col] = pd.to_datetime(work[time_col], errors="coerce", utc=True)
         work = work.dropna(subset=[time_col])
 
-        for _, row in work.iterrows():
-            p = Point(m).time(row[time_col].to_pydatetime())
+        for row in work.itertuples(index=False):
+            row_dict = row._asdict()
+            p = Point(m).time(row_dict[time_col].to_pydatetime())
             for t in tags:
-                v = row.get(t)
+                v = row_dict.get(t)
                 if pd.notna(v):
                     p = p.tag(t, str(v))
             for c in numeric_cols:
-                v = row.get(c)
+                v = row_dict.get(c)
                 if pd.notna(v):
                     p = p.field(c, float(v))
             points.append(p)
@@ -109,7 +110,7 @@ class DatabaseConnector:
 class SectorSentimentProxyImputer:
     """Imputes zero-mention sentiment using sector/day aggregates with causal-safe fallbacks."""
 
-    TRUTHY_VALUES = {"1", "true", "t", "yes", "y", "micro", "microcap", "micro_cap"}
+    MICROCAP_TRUTHY_VALUES = {"1", "true", "t", "yes", "y", "micro", "microcap", "micro_cap"}
     TIER_LOW_QUANTILE = 0.33
     TIER_HIGH_QUANTILE = 0.66
 
@@ -137,7 +138,7 @@ class SectorSentimentProxyImputer:
         if pd.api.types.is_bool_dtype(s):
             return s.fillna(False)
         vals = s.astype(str).str.strip().str.lower()
-        return vals.isin(self.TRUTHY_VALUES)
+        return vals.isin(self.MICROCAP_TRUTHY_VALUES)
 
     def apply(self, df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         if df.empty or self.date_col not in df.columns:

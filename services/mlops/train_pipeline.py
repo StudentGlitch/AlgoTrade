@@ -437,9 +437,6 @@ class ContinuousTrainingPipeline:
     def close(self) -> None:
         self.db.close()
 
-    def __del__(self):
-        self.close()
-
     def daily_collect_and_score(self) -> dict:
         df = self.repo.load()
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
@@ -581,15 +578,17 @@ def main() -> None:
         weekly_time=args.weekly_time,
     )
     pipe = ContinuousTrainingPipeline(cfg)
-
-    if args.mode == "collect":
-        print(json.dumps(pipe.daily_collect_and_score(), indent=2))
-    elif args.mode == "refit":
-        print(json.dumps(pipe.weekly_refit(), indent=2))
-    elif args.mode == "once":
-        print(json.dumps(pipe.run_once(), indent=2))
-    else:
-        pipe.scheduler_daemon()
+    try:
+        if args.mode == "collect":
+            print(json.dumps(pipe.daily_collect_and_score(), indent=2))
+        elif args.mode == "refit":
+            print(json.dumps(pipe.weekly_refit(), indent=2))
+        elif args.mode == "once":
+            print(json.dumps(pipe.run_once(), indent=2))
+        else:
+            pipe.scheduler_daemon()
+    finally:
+        pipe.close()
 
 
 if __name__ == "__main__":
