@@ -164,16 +164,19 @@ class GlobalPanelLSTMRefitter:
         if tf is None:
             raise RuntimeError("TensorFlow is required.")
 
-        gen = lambda: self._iter_sequences(df, features, cutoff_date)  # noqa: E731
-        raw_ds = tf.data.Dataset.from_generator(
-            gen,
-            output_signature=(
-                tf.TensorSpec(shape=(), dtype=tf.int32),
-                tf.TensorSpec(shape=(self.cfg.lookback, n_features), dtype=tf.float32),
-                tf.TensorSpec(shape=(), dtype=tf.float32),
-            ),
-        )
-        # Reshape ticker_id to (1,) for the Embedding layer
+        # Materialise count in a single pass before building the TF dataset
+        # to avoid iterating the generator twice.
+        all_seqs = list(self._iter_sequences(df, features, cutoff_date))
+        count = len(all_seqs)
+
+        if count == 0:
+            return None, 0
+
+        tids = np.array([s[0] for s in all_seqs], dtype=np.int32)
+        seqs = np.array([s[1] for s in all_seqs], dtype=np.float32)
+        targets = np.array([s[2] for s in all_seqs], dtype=np.float32)
+
+        raw_ds = tf.data.Dataset.from_tensor_slices((tids, seqs, targets))
         ds = raw_ds.map(
             lambda tid, seq, y: (
                 {"ticker_id": tf.expand_dims(tid, 0), "market_sequence": seq},
@@ -181,8 +184,6 @@ class GlobalPanelLSTMRefitter:
             ),
             num_parallel_calls=tf.data.AUTOTUNE,
         )
-        # Count without loading all data into RAM
-        count = sum(1 for _ in self._iter_sequences(df, features, cutoff_date))
         ds = ds.shuffle(min(count, 20_000), seed=42).batch(self.cfg.batch_size).prefetch(tf.data.AUTOTUNE)
         return ds, count
 

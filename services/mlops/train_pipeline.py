@@ -476,8 +476,8 @@ class ContinuousTrainingPipeline:
 
         mf = self.mirofish.collect_latest() if self.mirofish.enabled() else pd.DataFrame()
         out_df, stats = self.collector.collect_daily(df, mf)
-        out_df, proxy_stats = self.sentiment_proxy.apply(out_df)
-        stats.update(proxy_stats)
+        out_df, sentiment_proxy_stats = self.sentiment_proxy.apply(out_df)
+        stats.update(sentiment_proxy_stats)
 
         influx_rows = 0
         if self.db.available() and "date" in out_df.columns:

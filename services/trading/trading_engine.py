@@ -67,9 +67,9 @@ class PortfolioWeightService:
             if os.path.exists(meta_path):
                 meta = joblib.load(meta_path)
                 self._asset_names = meta.get("asset_names", [])
-                n = len(self._asset_names)
-                if n > 0:
-                    self._weights = {a: 1.0 / n for a in self._asset_names}
+                num_assets = len(self._asset_names)
+                if num_assets > 0:
+                    self._weights = {a: 1.0 / num_assets for a in self._asset_names}
                     self._source = "e2e_equal_fallback"
             if os.path.exists(hrp_path):
                 saved = joblib.load(hrp_path)

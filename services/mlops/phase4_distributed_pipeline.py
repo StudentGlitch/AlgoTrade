@@ -352,16 +352,22 @@ class WebSocketMarketFeed:
         if not symbol:
             return
         price = float(msg.get("p", 0) or msg.get("vw", 0) or 0)
-        volume = float(msg.get("s", 0) if "s" in msg and isinstance(msg["s"], (int, float)) else msg.get("av", 0) or 0)
+        # volume field 's' can collide with symbol in some message types
+        raw_vol = msg.get("av", 0)
+        if "s" in msg and isinstance(msg["s"], (int, float)):
+            raw_vol = msg["s"]
+        volume = float(raw_vol or 0)
         ts_ms = msg.get("t", msg.get("e", 0)) or 0
         ts = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc) if ts_ms else datetime.now(tz=timezone.utc)
+        bid = float(msg.get("bx", 0) or msg.get("bp", 0) or 0)
+        ask = float(msg.get("ax", 0) or msg.get("ap", 0) or 0)
         tick = MarketTick(
             symbol=symbol,
             timestamp=ts,
             price=price,
             volume=volume,
-            bid=float(msg.get("bx", 0) or msg.get("bp", 0) or 0),
-            ask=float(msg.get("ax", 0) or msg.get("ap", 0) or 0),
+            bid=bid,
+            ask=ask,
         )
         with self._lock:
             self._latest[symbol] = tick
