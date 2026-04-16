@@ -153,6 +153,17 @@ class GlobalPanelLSTMRefitter:
                     tgt[i],
                 )
 
+    def _count_sequences(self, df: pd.DataFrame, features: list[str], cutoff_date: Optional[pd.Timestamp]) -> int:
+        """Lightweight count pass — iterates dates only, no numpy array allocation."""
+        count = 0
+        for _, group in df.groupby("company"):
+            g = group.sort_values("date").reset_index(drop=True)
+            dates = pd.to_datetime(g["date"].values)
+            for i in range(self.cfg.lookback, len(g)):
+                if cutoff_date is None or dates[i] <= cutoff_date:
+                    count += 1
+        return count
+
     def _make_dataset(
         self,
         df: pd.DataFrame,
@@ -160,23 +171,23 @@ class GlobalPanelLSTMRefitter:
         n_features: int,
         cutoff_date: Optional[pd.Timestamp],
     ) -> tuple[object, int]:
-        """Build a tf.data.Dataset from the lazy sequence generator."""
+        """Build a memory-safe tf.data.Dataset via from_generator (truly lazy)."""
         if tf is None:
             raise RuntimeError("TensorFlow is required.")
 
-        # Materialise count in a single pass before building the TF dataset
-        # to avoid iterating the generator twice.
-        all_seqs = list(self._iter_sequences(df, features, cutoff_date))
-        count = len(all_seqs)
-
+        count = self._count_sequences(df, features, cutoff_date)
         if count == 0:
             return None, 0
 
-        tids = np.array([s[0] for s in all_seqs], dtype=np.int32)
-        seqs = np.array([s[1] for s in all_seqs], dtype=np.float32)
-        targets = np.array([s[2] for s in all_seqs], dtype=np.float32)
-
-        raw_ds = tf.data.Dataset.from_tensor_slices((tids, seqs, targets))
+        gen = lambda: self._iter_sequences(df, features, cutoff_date)  # noqa: E731
+        raw_ds = tf.data.Dataset.from_generator(
+            gen,
+            output_signature=(
+                tf.TensorSpec(shape=(), dtype=tf.int32),
+                tf.TensorSpec(shape=(self.cfg.lookback, n_features), dtype=tf.float32),
+                tf.TensorSpec(shape=(), dtype=tf.float32),
+            ),
+        )
         ds = raw_ds.map(
             lambda tid, seq, y: (
                 {"ticker_id": tf.expand_dims(tid, 0), "market_sequence": seq},

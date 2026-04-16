@@ -175,8 +175,8 @@ class E2EPortfolioOptimizer:
         pivot_vol = train_df.pivot_table(index="date", columns="company", values=vol_col, aggfunc="mean")
         pivot_ret = train_df.pivot_table(index="date", columns="company", values="abs_return", aggfunc="mean")
 
-        pivot_vol = pivot_vol.reindex(columns=assets).fillna(method="ffill").fillna(0.0)
-        pivot_ret = pivot_ret.reindex(columns=assets).fillna(method="ffill").fillna(0.0)
+        pivot_vol = pivot_vol.reindex(columns=assets).ffill().fillna(0.0)
+        pivot_ret = pivot_ret.reindex(columns=assets).ffill().fillna(0.0)
         pivot_vol, pivot_ret = pivot_vol.align(pivot_ret, join="inner", axis=0)
 
         if len(pivot_vol) < MIN_OPT_SAMPLES:

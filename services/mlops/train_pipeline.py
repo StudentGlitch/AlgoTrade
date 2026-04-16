@@ -467,7 +467,8 @@ class ContinuousTrainingPipeline:
         self.sentiment_proxy = SectorSentimentProxyImputer()
 
     def close(self) -> None:
-        self.db.close()
+        if self.db is not None:
+            self.db.close()
 
     def daily_collect_and_score(self) -> dict:
         df = self.repo.load()

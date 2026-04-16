@@ -52,8 +52,11 @@ class PortfolioWeightService:
       3. Equal-weight distribution if no saved weights exist
     """
 
-    def __init__(self, prod_dir: Optional[str] = None):
+    def __init__(self, prod_dir: Optional[str] = None, ticker_suffix: Optional[str] = None):
         self.prod_dir = prod_dir or os.getenv("PROD_DIR", _DEFAULT_PROD_DIR)
+        # Exchange-specific ticker suffix stripped when looking up weights.
+        # Defaults to TICKER_SUFFIX env var, then ".JK" (IDX exchange).
+        self.ticker_suffix = ticker_suffix or os.getenv("TICKER_SUFFIX", ".JK")
         self._weights: Optional[Dict[str, float]] = None
         self._asset_names: Optional[List[str]] = None
         self._source: str = "not_loaded"
@@ -83,12 +86,12 @@ class PortfolioWeightService:
         return self._weights is not None
 
     def get_weight(self, symbol: str, default: float = 0.0) -> float:
-        """Return portfolio weight for a symbol (e.g. 'BBRI')."""
+        """Return portfolio weight for a symbol (e.g. 'BBRI' or 'BBRI.JK')."""
         if self._weights is None:
             self.load()
         if self._weights is None:
             return default
-        company = symbol.replace(".JK", "")
+        company = symbol.replace(self.ticker_suffix, "")
         return float(self._weights.get(company, self._weights.get(symbol, default)))
 
     def get_max_position_fraction(self, symbol: str, max_cap: float = 0.25) -> float:
