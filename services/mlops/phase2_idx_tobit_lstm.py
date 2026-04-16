@@ -98,7 +98,10 @@ class IDXTobitLoss:
         Compute mean Tobit negative log-likelihood.
 
         Args:
-            y_pred: (N,) predicted latent log-volatility (any scale)
+            y_pred: (N,) predicted volatility in the same scale as y_true
+                    (i.e. fractional absolute return, not log-space).
+                    The model output is treated as the mean parameter mu of a
+                    Gaussian distribution over the observed absolute return.
             y_true: (N,) observed absolute return (may be censored at limits)
 
         Returns:
@@ -526,5 +529,5 @@ class IDXCensoredVolatilityRefitter:
         return self._lstm.predict(df)
 
     def save(self, prod_dir: str) -> dict:
-        """Save model artefacts atomically. Returns artifact paths."""
+        """Save model artifacts atomically. Returns artifact paths."""
         return self._lstm.save(prod_dir)

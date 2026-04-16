@@ -45,9 +45,9 @@ except ImportError:
 
 IDX_ARB_LIMITS_BY_PRICE = (
     # (max_price, arb_fraction)  — lower price bands have wider ARB limits
-    (200,      -0.35),
-    (5_000,    -0.25),
-    (5_000_0,  -0.20),
+    (200,       -0.35),
+    (5_000,     -0.25),
+    (50_000,    -0.20),
     (float("inf"), -0.10),
 )
 

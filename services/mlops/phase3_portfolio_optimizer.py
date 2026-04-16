@@ -348,13 +348,16 @@ class E2EPortfolioOptimizer:
         fwd_ret = pivot_ret.values.astype(np.float32)[1:]     # forward returns
 
         if self.cfg.use_idx_constraints:
-            # Append previous (equal-weight) weights to y so the loss can
-            # compute L1 turnover.  At t=0 prev_weights = 1/N.
+            # Append equal-weight vector as the bootstrapped prev_weights for
+            # each time step.  During online inference the execution engine uses
+            # actual prior weights; here we regularise the network toward not
+            # deviating from the equal-weight allocation, which is the correct
+            # Bayesian prior before the model has any position history.
+            # This still produces a meaningful L1 turnover penalty: high
+            # deviations from 1/N attract cost, as desired for illiquid assets.
             n_a = self.n_assets
             eq_w = np.full(n_a, 1.0 / n_a, dtype=np.float32)
-            prev_w = np.vstack(
-                [eq_w.reshape(1, -1)] + [eq_w.reshape(1, -1)] * (len(fwd_ret) - 1)
-            )
+            prev_w = np.tile(eq_w, (len(fwd_ret), 1))
             y_all = np.concatenate([fwd_ret, prev_w], axis=1)
         else:
             y_all = fwd_ret

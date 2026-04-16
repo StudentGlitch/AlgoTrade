@@ -1,3 +1,12 @@
+"""
+Phase 1: IDX Localized NLP and Pom-Pom Regime Detection
+--------------------------------------------------------
+Provides Indonesian-language sentiment extraction using a localized
+HuggingFace model and a GMM-based Pom-Pom regime detector that identifies
+pump-and-dump retail activity on the IDX by combining localized sentiment
+dimensions with abnormal volume spikes.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

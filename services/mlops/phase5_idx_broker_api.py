@@ -1,7 +1,7 @@
 """
 Phase 5: IDX Broker API Integration
 -------------------------------------
-Localised data connector and Level 2 Order Book wrapper for the Indonesian
+Localized data connector and Level 2 Order Book wrapper for the Indonesian
 Stock Exchange (IDX).  This module provides:
 
   IDXOrderBookLevel2
