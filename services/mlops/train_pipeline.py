@@ -434,6 +434,12 @@ class ContinuousTrainingPipeline:
         self.db = DatabaseConnector()
         self.sentiment_proxy = SectorSentimentProxyImputer()
 
+    def close(self) -> None:
+        self.db.close()
+
+    def __del__(self):
+        self.close()
+
     def daily_collect_and_score(self) -> dict:
         df = self.repo.load()
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
