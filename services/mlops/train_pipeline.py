@@ -36,6 +36,7 @@ import tensorflow as tf
 from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.layers import Dense, Dropout, Input, LSTM
 from tensorflow.keras.models import Sequential
+from phase1_enterprise_data_pipeline import DatabaseConnector, SectorSentimentProxyImputer
 
 try:
     import torch
@@ -430,6 +431,8 @@ class ContinuousTrainingPipeline:
         self.logger = JsonLogger(cfg.log_path)
         self.collector = DailyCollector(cfg)
         self.mirofish = MirofishClient()
+        self.db = DatabaseConnector()
+        self.sentiment_proxy = SectorSentimentProxyImputer()
 
     def daily_collect_and_score(self) -> dict:
         df = self.repo.load()
@@ -438,6 +441,16 @@ class ContinuousTrainingPipeline:
 
         mf = self.mirofish.collect_latest() if self.mirofish.enabled() else pd.DataFrame()
         out_df, stats = self.collector.collect_daily(df, mf)
+        out_df, proxy_stats = self.sentiment_proxy.apply(out_df)
+        stats.update(proxy_stats)
+
+        influx_rows = 0
+        if self.db.available() and "date" in out_df.columns:
+            latest_date = pd.to_datetime(out_df["date"], errors="coerce").max()
+            if pd.notna(latest_date):
+                latest_slice = out_df[pd.to_datetime(out_df["date"], errors="coerce") == latest_date]
+                influx_rows = self.db.write_market_panel(latest_slice)
+        stats["influx_rows_written"] = int(influx_rows)
         self.repo.save(out_df)
         self.logger.write("daily_collect_success", stats)
         return stats
