@@ -1,0 +1,18 @@
+# Pinned lock file for reproducible trading_service Docker builds.
+# Update intentionally when dependency versions are changed.
+numpy==2.4.4
+pandas==3.0.2
+backtrader @ git+https://github.com/mementum/backtrader.git@b853d7c90b6721476eb5a5ea3135224e33db1f14
+ib-insync==0.9.86
+requests==2.32.5
+python-dotenv==1.2.2
+yfinance==1.2.2
+scikit-learn==1.8.0
+tensorflow==2.21.0
+torch==2.11.0
+transformers==5.5.4
+joblib==1.5.3
+schedule==1.2.2
+TA-Lib==0.6.8
+scipy==1.17.1
+websocket-client==1.9.0

@@ -36,9 +36,22 @@ COPY --from=ta_builder /usr/include/ta-lib /usr/include/ta-lib
 
 WORKDIR /app
 
-# Install Python dependencies from service-specific requirements file
+# Install Python dependencies from pinned lock file for reproducible builds
 COPY services/trading/requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
+COPY services/trading/requirements.lock.txt /app/requirements.lock.txt
+RUN pip install --no-cache-dir -r /app/requirements.lock.txt
+
+# Build-time guard: fail image build immediately when IBStore is unavailable
+RUN python - <<'PY'
+import backtrader as bt
+
+if not hasattr(bt.stores, "IBStore"):
+    raise RuntimeError(
+        "Build validation failed: bt.stores.IBStore is unavailable. "
+        "Check services/trading/requirements.lock.txt backtrader pin."
+    )
+print("OK: bt.stores.IBStore is available")
+PY
 
 # Copy service source files
 # train_pipeline.py and preflight_warmup.py are included because

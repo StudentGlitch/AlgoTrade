@@ -54,3 +54,21 @@ python services/trading/trading_engine.py --mode live --paper --broker ib --run-
 - Pre-flight (`--run-preflight`) blocks live startup until model refresh succeeds.
 - Model sharing is done via `./shared/models:/app/shared/models` (Docker volume).
 - Data sharing is done via `./shared/data:/app/shared/data` (Docker volume).
+
+## 5) Verify IBStore in Docker Compose (reproducible trading_service build)
+
+```bash
+# Rebuild trading service from pinned lockfile/dependency set
+docker compose build --no-cache trading_service
+
+# Start or restart the service
+docker compose up -d trading_service
+
+# Verify IBStore exists in the running container
+docker compose exec trading_service python -c "import backtrader as bt; print('IBStore available:', hasattr(bt.stores, 'IBStore'))"
+
+# Confirm logs no longer include the old startup error
+docker compose logs trading_service | grep -F "IBStore is unavailable in this Backtrader installation." || echo "No IBStore startup error found"
+```
+
+- Validate in `--paper` mode first, then remove `--paper` for live execution only after paper mode is stable.
