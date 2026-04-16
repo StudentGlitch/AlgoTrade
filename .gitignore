@@ -34,6 +34,8 @@ production/logs/
 *.xlsx
 *.xls
 *.tmp
+~$*
+*.sav
 
 # Keep production model directory structure, but not model binaries by default
 production/models/*.h5
