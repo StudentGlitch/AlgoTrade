@@ -17,7 +17,7 @@ import math
 import os
 import time
 import argparse
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from collections import deque
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple
@@ -154,15 +154,16 @@ class RegimeStateMachine:
     BREAKOUT_VOLATILE = {4, 6}
     TRENDING_NORMAL = {1, 3}
     MEAN_REVERSION = {7, 8}
-    POM_POM_STOP_MULT = 0.6
+    # "POM_POM" = pump-and-dump-like retail-hype regime on IDX.
+    PUMP_DUMP_STOP_MULT = 0.6
 
     def resolve(self, profile_id: int, pom_pom_active: bool = False) -> RegimeConfig:
         if pom_pom_active:
             return RegimeConfig(
-                action="POM_POM_RISK_OFF",
+                action="PUMP_DUMP_RISK_OFF",
                 max_pos_size=0.0,
                 c_scale=0.0,
-                k_stop_mult=self.POM_POM_STOP_MULT,
+                k_stop_mult=self.PUMP_DUMP_STOP_MULT,
             )
         if profile_id in self.BREAKOUT_VOLATILE:
             return RegimeConfig(
@@ -421,6 +422,7 @@ class RegimeExecutionStrategy(bt.Strategy):
         self.portfolio_weight_svc: Optional[PortfolioWeightService] = self.p.portfolio_weight_service
         self.live_symbol = self.p.live_symbol
         self.last_profile_id: Optional[int] = None
+        self.last_pom_pom_active: bool = False
 
     def _send_alert(self, event: str, message: str, payload: Optional[dict] = None):
         if self.notifier:
@@ -537,8 +539,6 @@ class RegimeExecutionStrategy(bt.Strategy):
         pv = float(self.broker.getvalue())
 
         regime = self.state_machine.resolve(profile_id, pom_pom_active=pom_pom_active)
-        if pom_pom_active:
-            regime = replace(regime, k_stop_mult=min(regime.k_stop_mult, 0.6))
         stop_dist = self.risk.stop_distance(regime.k_stop_mult, pred_vol)
 
         if self.last_profile_id != profile_id:
@@ -548,12 +548,13 @@ class RegimeExecutionStrategy(bt.Strategy):
                 {"profile_id": profile_id, "action": regime.action, "timestamp": pd.Timestamp(dt).isoformat()},
             )
             self.last_profile_id = profile_id
-        if pom_pom_active:
+        if pom_pom_active and not self.last_pom_pom_active:
             self._send_alert(
-                "pompom_regime_active",
+                "pom_pom_regime_active",
                 "POM_POM regime active: forcing 0% allocation and tighter stops.",
                 {"profile_id": profile_id, "timestamp": pd.Timestamp(dt).isoformat()},
             )
+        self.last_pom_pom_active = bool(pom_pom_active)
 
         direction = self._signal_direction(finbert)
         f_star = self.risk.kelly_fraction(p=self.p.kelly_p, b=self.p.kelly_b)
@@ -600,7 +601,7 @@ class RegimeExecutionStrategy(bt.Strategy):
                 target_abs_size=target_abs,
                 regime_action=regime.action,
             )
-        elif regime.action in {"AGGRESSIVE_DIRECTIONAL", "POM_POM_RISK_OFF"}:
+        elif regime.action in {"AGGRESSIVE_DIRECTIONAL", "PUMP_DUMP_RISK_OFF"}:
             self._execute_parent_delta(
                 delta,
                 decision_price=close_px,

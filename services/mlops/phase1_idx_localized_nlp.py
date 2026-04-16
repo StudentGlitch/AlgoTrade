@@ -35,6 +35,8 @@ class LocalizedIndonesianSentimentExtractor:
     def __init__(self, cfg: Optional[LocalizedSentimentConfig] = None):
         self.cfg = cfg or LocalizedSentimentConfig()
         self._model_ref = None
+        self._positive_idx = 0
+        self._negative_idx = 1
 
     def _load_model(self):
         if self._model_ref is not None:
@@ -45,18 +47,31 @@ class LocalizedIndonesianSentimentExtractor:
         tok = AutoTokenizer.from_pretrained(self.cfg.model_name)
         model = AutoModelForSequenceClassification.from_pretrained(self.cfg.model_name)
         model.eval()
+        id2label = getattr(model.config, "id2label", {}) or {}
+        pos_idx = None
+        neg_idx = None
+        for idx, label in id2label.items():
+            txt = str(label).strip().lower()
+            if txt in {"positive", "pos", "bullish"}:
+                pos_idx = int(idx)
+            if txt in {"negative", "neg", "bearish"}:
+                neg_idx = int(idx)
+        if pos_idx is not None:
+            self._positive_idx = pos_idx
+        if neg_idx is not None:
+            self._negative_idx = neg_idx
         self._model_ref = (tok, model)
         return self._model_ref
 
-    @staticmethod
-    def _to_dimensions_from_probs(probs: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def _to_dimensions_from_probs(self, probs: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         n_labels = probs.shape[1]
-        if n_labels >= 3:
-            positive = probs[:, 0]
-            negative = probs[:, 1]
-        elif n_labels == 2:
-            positive = probs[:, 1]
-            negative = probs[:, 0]
+        if n_labels >= 2:
+            # Uses model.config.id2label (if present) to map positive/negative
+            # indices; otherwise falls back to {positive:0, negative:1}.
+            pos_idx = self._positive_idx if self._positive_idx < n_labels else 0
+            neg_idx = self._negative_idx if self._negative_idx < n_labels else 1
+            positive = probs[:, pos_idx]
+            negative = probs[:, neg_idx]
         else:
             positive = probs[:, 0]
             negative = np.zeros_like(positive)
@@ -204,8 +219,16 @@ class PomPomRegimeDetector:
             )
             .sort_index()
         )
-        polarity_thr = float(cluster_stats["mean_polarity"].quantile(self.cfg.positivity_quantile))
-        volume_thr = float(cluster_stats["mean_volume_spike"].quantile(self.cfg.volume_quantile))
+        if len(cluster_stats) < 2:
+            polarity_thr = float(work["sentiment_polarity"].quantile(self.cfg.positivity_quantile))
+            volume_thr = float(work["volume_spike_z20"].quantile(self.cfg.volume_quantile))
+        else:
+            polarity_thr = float(cluster_stats["mean_polarity"].quantile(self.cfg.positivity_quantile))
+            volume_thr = float(cluster_stats["mean_volume_spike"].quantile(self.cfg.volume_quantile))
+        if np.isnan(polarity_thr):
+            polarity_thr = 0.5
+        if np.isnan(volume_thr):
+            volume_thr = float(work["volume_spike_z20"].mean()) if len(work) else 0.0
         pom_clusters = cluster_stats[
             (cluster_stats["mean_polarity"] >= polarity_thr)
             & (cluster_stats["mean_volume_spike"] >= volume_thr)
